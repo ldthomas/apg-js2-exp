@@ -86,15 +86,15 @@ At the outset I naively thought that the regular expressions of regexes were jus
 But the best thing to do, probably, is to head over to the [examples](https://github.com/ldthomas/apg-js2-examples/) and take a look. See and compare for yourself. I would suggest starting with the `flags`, `display` and `rules` examples to get your bearings and go from there.
 
 **Installation:**    
-*Requires node.js and npm.*
+*Requires node.js and npm.*  
+To install `apg-exp` in your node.js project from GitHub, in your project directory
 ```
 git clone https://github.com/ldthomas/apg-js2-exp.git apgexp
-cd apgexp
-npm install ./
+npm install apgexp --save
 ```
 or just
 ```
-npm install apg-exp
+npm install apg-exp --save
 ```
 **Examples:**  
 See <a href="https://github.com/ldthomas/apg-js2-examples">apg-js2-examples/apg-exp</a> for many examples of using
