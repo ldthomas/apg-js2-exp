@@ -1,0 +1,21 @@
+{
+  "name": "apg-exp",
+  "version": "1.0.0",
+  "description": "Text search tool similar to RegExp, except uses ABNF grammar instead of regular expressions.",
+  "main": "./src/apg-exp.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "apg": "2.x",
+    "apg-lib": "2.x"
+  },
+  "keywords": [
+    "regexp",
+    "abnf",
+    "search",
+    "apg"
+  ],
+  "author": "Lowell D. Thomas <lowell@coasttocoastresearch.com> (http://coasttocoastresearch.com)",
+  "license": "BSD-3-Clause"
+}

@@ -1,0 +1,3 @@
+#!/bin/bash
+docco -l classic index.md README.md src/*.js
+exit 0
