@@ -10,6 +10,13 @@
     "apg": "*",
     "apg-lib": "*"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ldthomas/apg-js2-exp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ldthomas/apg-js2-exp/issues"
+  },
   "keywords": [
     "regexp",
     "abnf",

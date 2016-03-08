@@ -1,5 +1,7 @@
+[<span style="font-size: 150%;font-weight:bold;">&#8962;</span> home](http://coasttocoastresearch.com/)
+
 **Annotated Table of Contents**<br>
-*apg-exp - APG Expressions*
+*apg-exp - APG Expressions*<br>
 
 0. The GitHub & npm README page.
 > [README.md](./README.html)
