@@ -1,0 +1,36 @@
+.mono{font-family: monospace;}
+.active{font-weight: bold; color: #000000;}
+.match{font-weight: bold; color: #264BFF;}
+.empty{font-weight: bold; color: #0fbd0f;}
+.nomatch{font-weight: bold; color: #FF4000;}
+.lh-match{font-weight: bold; color: #1A97BA;}
+.lb-match{font-weight: bold; color: #5F1687;}
+.remainder{font-weight: bold; color: #999999;}
+.ctrl-char{font-weight: bolder; font-style: italic; font-size: .6em;}
+.line-end{font-weight: bold; color: #000000;}
+.left-table{font-family:monospace;}
+.left-table,
+.left-table th,
+.left-table td{text-align:left;border:1px solid black;border-collapse:collapse;}
+.left-table caption{font-size:125%;font-weight:bold;text-align:left;}
+.right-table{font-family:monospace;}
+.right-table,
+.right-table th,
+.right-table td{text-align:right;border:1px solid black;border-collapse:collapse;}
+.right-table caption{font-size:125%;font-weight:bold;text-align:left;}
+.last-left-table{font-family:monospace;}
+.last-left-table,
+.last-left-table th,
+.last-left-table td{text-align:right;border:1px solid black;border-collapse:collapse;}
+.last-left-table th:last-child{text-align:left;}
+.last-left-table td:last-child{text-align:left;}
+.last-left-table caption{font-size:125%;font-weight:bold;text-align:left;}
+.last2-left-table{font-family:monospace;}
+.last2-left-table,
+.last2-left-table th,
+.last2-left-table td{text-align:right;border:1px solid black;border-collapse:collapse;}
+.last2-left-table th:last-child{text-align:left;}
+.last2-left-table th:nth-last-child(2){text-align:left;}
+.last2-left-table td:last-child{text-align:left;}
+.last2-left-table td:nth-last-child(2){text-align:left;}
+.last2-left-table caption{font-size:125%;font-weight:bold;text-align:left;}
