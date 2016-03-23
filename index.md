@@ -29,4 +29,7 @@ matching phrases from the input string as it goes.
 such as the left context (<code>$&#96;</code>), matched phrase (`$&`), etc.
 > [parse-replacement.js](./parse-replacement.html)<br>
 
+0. Generate a browser-accessible copy of `apg-exp`.
+> [browser.js](./browser.html)<br>
+
 
