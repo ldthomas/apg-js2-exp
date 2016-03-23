@@ -1,6 +1,6 @@
 {
   "name": "apg-exp",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Pattern-matching tool similar to RegExp, except uses ABNF grammar instead of regular expressions.",
   "main": "./src/apg-exp.js",
   "scripts": {
