@@ -6,6 +6,13 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "files": [
+    "src",
+    "apgexp.js",
+    "apgexp.css",
+    "index.md",
+    "docco-gen"
+  ],
   "dependencies": {
     "apg": "*",
     "apg-lib": "*"
