@@ -106,7 +106,12 @@ See <a href="https://github.com/ldthomas/apg-js2-examples/tree/master/apg-exp">a
 `apg-exp`.
   
 **Documentation:**  
-The documentation is in the code in [`docco`](https://jashkenas.github.io/docco/) format.
+<i><b>UPDATE:</b> The files `apgexp.js` and `apgexp.css` have been added to make using `apg-exp`
+in a browser web page simple.</i><br>
+See the documentation in `src/apgexpjs-gen.js` and `src/apgexpcss-gen.js`.
+See, also, this [CodePen](http://codepen.io/apg-exp/pen/aNWEzR) for an example.
+
+The full documentation is in the code in [`docco`](https://jashkenas.github.io/docco/) format.
 To generate the documentation, from the package directory:
 ```
 npm install -g docco

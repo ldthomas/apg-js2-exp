@@ -1,11 +1,18 @@
 {
   "name": "apg-exp",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Pattern-matching tool similar to RegExp, except uses ABNF grammar instead of regular expressions.",
   "main": "./src/apg-exp.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "files": [
+    "src",
+    "apgexp.js",
+    "apgexp.css",
+    "index.md",
+    "docco-gen"
+  ],
   "dependencies": {
     "apg": "*",
     "apg-lib": "*"

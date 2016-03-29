@@ -1,19 +1,11 @@
 .*
-!.gitignore
 !.npmignore
 *~
-*.log
-*.out
-*.txt
-*.zip
-*.tgz
+apgexp.js
 cmsg
-*.html
 **html/
 **RemoteSystemsTempFiles/
 **workfiles/
-**node_modules/
 **test/
-**stress-test/
 **docs/
 
