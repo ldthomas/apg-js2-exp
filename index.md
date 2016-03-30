@@ -30,13 +30,8 @@ such as the left context (<code>$&#96;</code>), matched phrase (`$&`), etc.
 > [parse-replacement.js](./parse-replacement.html)<br>
 
 0. Generate a browser-accessible copy of `apg-exp`.
-<<<<<<< HEAD
-> [browser.js](./browser.html)<br>
-
-=======
 > [apgexpjs-gen.js](./apgexpjs-gen.html)<br>
 
 0. Generate the CSS file, `apgexp.css` to be used with `apg-exp` HTML output.
 > [apgexpcss-gen.js](./apgexpcss-gen.html)<br>
->>>>>>> tweek
 
