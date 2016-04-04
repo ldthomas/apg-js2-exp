@@ -91,9 +91,52 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
       return (state === apglib.ids.MATCH || state === apglib.ids.EMPTY);
     }
   }
+  // This is a custom exception object.
+  // Derived from Error, it is named `ApgExpError` and in addition to the error `message`
+  // it has two functions, `toText()` and `toHtml()` which will display the errors
+  // in a user-friendly ASCII text format or HTML format like the formats used by APG.
+  // e. g.
+  //```
+  // try{
+  //   ...
+  // }catch(e){
+  //   if(e.name === "ApgExpError"){
+  //     console.log(e.toText());
+  //   }else{
+  //     console.log(e.message);
+  //   }
+  //```
+  // All errors from the constructor and all object functions are reported by throwing an `ApgExpError` Error object.
+  var ApgExpError = function(msg, t, h){
+    this.message = msg;
+    this.name = "ApgExpError";
+    var text = t;
+    var html = h;
+    this.toText = function(){
+      var ret = "";
+      ret += this.message;
+      ret += "\n";
+      if(text){
+        ret += text;
+      }
+      return ret;
+    }
+    this.toHtml = function(){
+      var ret = "";
+      ret += "<h3>" + apglib.utils.stringToAsciiHtml(this.message) + "</h3>";
+      ret += "\n";
+      if(html){
+        ret += html;
+      }
+      return ret;
+    }
+  }
+  ApgExpError.prototype = new Error();
+  
   /* verifies that all UDT callback functions have been defined */
   var checkParserUdts = function(errorName) {
     var udterrors = []
+    var error = null;
     for (var i = 0; i < priv.grammarObject.udts.length; i += 1) {
       var lower = priv.grammarObject.udts[i].lower;
       if (typeof (priv.parser.callbacks[lower]) !== "function") {
@@ -101,32 +144,38 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
       }
     }
     if (udterrors.length > 0) {
-      throw new Error(errorName + "undefined UDT callback functions: " + udterrors);
+      error = "undefined UDT callback functions: " + udterrors;
     }
+    return error;
   }
+  
   /* the constructor */
   errorName = thisFileName + "constructor: ";
-  var errors = [];
+  var error = null;
+  var result = null;
   try {
     while (true) {
       /* flags */
-      setFlags(this, flags, errors);
-      if (errors.length > 0) {
+      error = setFlags(this, flags);
+      if (error) {
+        error = new ApgExpError(error);
         break;
       }
       /* grammar object for the defining SABNF grammar */
       if (typeof (input) === "string") {
         this.source = input;
-        priv.grammarObject = sabnfGenerator(input, errors);
-        if (errors.length > 0) {
+        result = sabnfGenerator(input);
+        if (result.error) {
+          error = new ApgExpError(result.error, result.text, result.html);
           break;
         }
+        priv.grammarObject = result.obj;
       } else if (typeof (input) === "object" && typeof (input.grammarObject) === "string"
           && input.grammarObject === "grammarObject") {
         priv.grammarObject = input;
         this.source = priv.grammarObject.toString();
       } else {
-        errors.push(errorName + "invalid SABNF grammar input");
+        error = new ApgExpError(thisFileName + "invalid SABNF grammar input");
         this.source = "";
         break;
       }
@@ -154,7 +203,7 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
         if (this.nodeHits > 0) {
           priv.parser.setMaxNodeHits(this.nodeHits);
         } else {
-          errors.push(errorName + "nodeHits must be integer > 0: " + nodeHits);
+          error = new ApgExpError(thisFileName + "nodeHits must be integer > 0: " + nodeHits);
           this.nodeHits = Infinity;
           break;
         }
@@ -166,7 +215,7 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
         if (this.treeDepth > 0) {
           priv.parser.setMaxTreeDepth(this.treeDepth);
         } else {
-          errors.push(errorName + "treeDepth must be integer > 0: " + treeDepth);
+          error = new ApgExpError(thisFileName + "treeDepth must be integer > 0: " + treeDepth);
           this.treeDepth = Infinity;
           break;
         }
@@ -180,14 +229,10 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
       break;
     }
   } catch (e) {
-    errors.push(e.name + ": " + e.message);
+    error = new ApgExpError(e.name + ": " + e.message);
   }
-  if (errors.length > 0) {
-    var msg = "";
-    errors.forEach(function(error) {
-      msg += error + "\n";
-    });
-    throw new Error(msg);
+  if (error) {
+    throw error;
   }
   // <pre><code>
   // str - the input string to find the patterns in
@@ -226,6 +271,7 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
   /* public API */
   this.exec = function(str) {
     var result = null;
+    var error;
     errorName = thisFileName = "exec(): ";
     if (typeof (str) === "string") {
       priv.str = str;
@@ -238,7 +284,10 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
     }
     priv.parser.ast = this.ast;
     priv.parser.trace = this.trace;
-    checkParserUdts(errorName);
+    error = checkParserUdts(errorName);
+    if(error){
+      throw new ApgExpError(errorName + error);
+    }
     if (this.sticky) {
       result = execFuncs.execAnchor(priv);
     } else {
@@ -251,6 +300,7 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
   // However, see caution above for `exec()`.
   this.test = function(str) {
     var result = null;
+    var error;
     errorName = thisFileName + "test(): ";
     if (typeof (str) === "string") {
       priv.str = str;
@@ -265,7 +315,10 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
     priv.parser.trace = null;
     this.ast = null;
     this.trace = null;
-    checkParserUdts(errorName);
+    error = checkParserUdts(errorName);
+    if(error){
+      throw new ApgExpError(errorName + error);
+    }
     if (this.sticky) {
       result = execFuncs.testAnchor(priv);
     } else {
@@ -316,10 +369,10 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
   this.replace = function(str, replacement) {
     errorName = thisFileName + "replace(): ";
     if (this.unicode) {
-      throw new Error(errorName + "cannot do string replacement in 'unicode' mode. Insure that 'u' flag is absent.");
+      throw new ApgExpError(errorName + "cannot do string replacement in 'unicode' mode. Insure that 'u' flag is absent.");
     }
     if (typeof (str) !== "string") {
-      throw new Error(errorName + "input type error: str not a string");
+      throw new ApgExpError(errorName + "input type error: str not a string");
     }
     if (typeof (replacement) === "string") {
       return replaceFuncs.replaceString(priv, str, replacement);
@@ -327,7 +380,7 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
     if (typeof (replacement) === "function") {
       return replaceFuncs.replaceFunction(priv, str, replacement);
     }
-    throw new Error(errorName + "input type error: replacement not a string or function");
+    throw new ApgExpError(errorName + "input type error: replacement not a string or function");
   }
   // <pre>
   // <code>
@@ -353,20 +406,20 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
   this.split = function(str, limit) {
     errorName = thisFileName + "split(): ";
     if (this.unicode) {
-      throw new Error(errorName + "cannot do string split in 'unicode' mode. Insure that 'u' flag is absent.");
+      throw new ApgExpError(errorName + "cannot do string split in 'unicode' mode. Insure that 'u' flag is absent.");
     }
     if (str === undefined || str === null || str === "") {
       return [ "" ];
     }
     if (typeof (str) !== "string") {
-      throw new Error(errorName + "argument must be a string: typeof(arg): " + typeof (str));
+      throw new ApgExpError(errorName + "argument must be a string: typeof(arg): " + typeof (str));
     }
     if (typeof (limit) !== "number") {
       limit = Infinity;
     } else {
       limit = Math.floor(limit);
       if (limit <= 0) {
-        throw new Error(errorName + "limit must be >= 0: limit: " + limit);
+        throw new ApgExpError(errorName + "limit must be >= 0: limit: " + limit);
       }
     }
     return splitFuncs.split(priv, str, limit);
@@ -394,17 +447,17 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
       for (var i = 0; i < list.length; i += 1) {
         var l = list[i];
         if (typeof (l) !== "string") {
-          throw new Error(errorName + "invalid name type in list");
+          throw new ApgExpError(errorName + "invalid name type in list");
         }
         l = l.toLowerCase();
         if (_this.ast.callbacks[l] === undefined) {
-          throw new Error(errorName + "unrecognized name in list: " + list[i]);
+          throw new ApgExpError(errorName + "unrecognized name in list: " + list[i]);
         }
         _this.ast.callbacks[l] = true;
       }
       return;
     }
-    throw new Error(errorName + "unrecognized list type");
+    throw new ApgExpError(errorName + "unrecognized list type");
   }
   // Select specific rule/UDT names to exclude in the result object.
   // `list` is an array of rule/UDT names to exclude.
@@ -429,17 +482,17 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
       for (var i = 0; i < list.length; i += 1) {
         var l = list[i];
         if (typeof (l) !== "string") {
-          throw new Error(errorName + "invalid name type in list");
+          throw new ApgExpError(errorName + "invalid name type in list");
         }
         l = l.toLowerCase();
         if (_this.ast.callbacks[l] === undefined) {
-          throw new Error(errorName + "unrecognized name in list: " + list[i]);
+          throw new ApgExpError(errorName + "unrecognized name in list: " + list[i]);
         }
         _this.ast.callbacks[l] = false;
       }
       return;
     }
-    throw new Error(errorName + "unrecognized list type");
+    throw new ApgExpError(errorName + "unrecognized list type");
   }
   // Defines a UDT callback function. *All* UDTs appearing in the SABNF phrase syntax must be defined here.
   // <pre><code>
@@ -450,10 +503,10 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
   this.defineUdt = function(name, func) {
     errorName = thisFileName + "defineUdt(): ";
     if (typeof (name) !== "string") {
-      throw new Error(errorName + "'name' must be a string");
+      throw new ApgExpError(errorName + "'name' must be a string");
     }
     if (typeof (func) !== "function") {
-      throw new Error(errorName + "'func' must be a function reference");
+      throw new ApgExpError(errorName + "'func' must be a function reference");
     }
     var lowerName = name.toLowerCase();
     for (var i = 0; i < priv.grammarObject.udts.length; i += 1) {
@@ -462,7 +515,7 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
         return;
       }
     }
-    throw new Error(errorName + "'name' not a UDT name: " + name);
+    throw new ApgExpError(errorName + "'name' not a UDT name: " + name);
   }
   // Estimates the upper bound of the call stack depth for this JavaScript
   // engine. Taken from [here](http://www.2ality.com/2014/04/call-stack-size.html)

@@ -27,7 +27,7 @@
 //    /* 
 //     * use apg-exp
 //    */
-//    var exp = new apgexp(grammar);
+//    var exp = new ApgExp(grammar);
 //    var result = exp.exec(str);
 //    ... /* do something with result */
 //    /*
@@ -39,6 +39,6 @@
 //  </script>
 // ```
 (function(){
-  this.apgexp = require("./apg-exp.js");
+  this.ApgExp = require("./apg-exp.js");
   this.apglib = require("apg-lib");
 })()
