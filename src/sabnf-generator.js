@@ -6,70 +6,66 @@
 // errors - required, must be an array
 // ```
 "use strict;";
-module.exports = function(input, errors){
-  var errorName = "abnf-exp: generator: ";
+module.exports = function(input){
+  var errorName = "apg-exp: generator: ";
   var apg = require("apg");
   var attributes = new apg.attributes();
   var grammarAnalysis = new apg.inputAnalysisParser();
   var parser = new apg.ABNFForSABNFParser();
   var grammarResult;
   var grammarObject = null;
+  var result = {obj: null, error: null, text: null, html: null};
   while(true){
-    if(Array.isArray(errors) === false){
-      break;
-    }
-    errors.length = 0;
-    
     /* verify the input string - preliminary analysis*/
     try{
       grammarAnalysis.getString(input);
     }catch(e){
-      errors.push(errorName + e.msg);
+      result.error = errorName + e.msg;
       break;
     }
     try{
       grammarResult = grammarAnalysis.analyze();
     }catch(e){
-      errors.push(errorName + e.msg);
+      result.error = errorName + e.msg;
       break;
     }
     if(grammarResult.hasErrors){
-      grammarResult.errors.forEach(function(error){
-        errors.push(errorName + "line: "+error.line+" char: "+error.char+" error: "+error.msg)
-      });
+      result.error = "grammar has validation errors";
+      result.text = grammarAnalysis.errorsToString(grammarResult.errors);
+      result.html = grammarAnalysis.errorsToHtml(grammarResult.errors);
       break;
     }
     
     /* syntax analysis of the grammar */
     grammarResult = parser.syntax(grammarAnalysis);
     if(grammarResult.hasErrors){
-      grammarResult.errors.forEach(function(error){
-        errors.push(errorName + "line: "+error.line+" char: "+error.char+" error: "+error.msg)
-      });
+      result.error = "grammar has syntax errors";
+      result.text = grammarAnalysis.errorsToString(grammarResult.errors);
+      result.html = grammarAnalysis.errorsToHtml(grammarResult.errors);
       break;
     }
     
     /* semantic analysis of the grammar */
     grammarResult = parser.semantic();
     if(grammarResult.hasErrors){
-      grammarResult.errors.forEach(function(error){
-        errors.push(errorName + "line: "+error.line+" char: "+error.char+" error: "+error.msg)
-      });
+      result.error = "grammar has semantic errors";
+      result.text = grammarAnalysis.errorsToString(grammarResult.errors);
+      result.html = grammarAnalysis.errorsToHtml(grammarResult.errors);
       break;
     }
     
     /* attribute analysis of the grammar */
-    var attrErrors = attributes.getAttributes(grammarResult.rules);
+    var attrErrors = attributes.getAttributes(grammarResult.rules, grammarResult.rulesLineMap);
     if(attrErrors.length > 0){
-      attrErrors.forEach(function(error){
-        errors.push(errorName +"rule name: '"+error.name + "' attribute error: '" + error.error + "'");
-      });
+      result.error = "grammar has attribute errors";
+      result.text = grammarAnalysis.errorsToString(attrErrors);
+      result.html = grammarAnalysis.errorsToHtml(attrErrors);
       break;
     }
     
     /* finally, generate a grammar object */
-    grammarObject = parser.generateObject(grammarResult.rules, grammarResult.udts, input);
+    result.obj = parser.generateObject(grammarResult.rules, grammarResult.udts, input);
     break;
   }
-  return grammarObject;
+  return result;
 }

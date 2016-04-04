@@ -1,7 +1,8 @@
 // This module analyzes the flags string, setting the true/false flags accordingly.
 "use strict;"
-module.exports = function(obj, flags, errors) {
+module.exports = function(obj, flags) {
   var errorName = "apg-exp: constructor: flags: ";
+  var error = null;
   var readonly = {
       writable : false,
       enumerable : false,
@@ -20,8 +21,7 @@ module.exports = function(obj, flags, errors) {
       break;
     }
     if (typeof (flags) !== "string") {
-      errors.push(errorName + "Invalid flags supplied to constructor: must be null, undefined or string: '"
-          + typeof (flags) + "'");
+      error = errorName + "Invalid flags supplied to constructor: must be null, undefined or string: '"+ typeof (flags) + "'";
       break;
     }
     if (flags === "") {
@@ -44,8 +44,8 @@ module.exports = function(obj, flags, errors) {
         obj.sticky = true;
         break;
       default:
-        errors.push(errorName + "Invalid flags supplied to constructor: '" + flags + "'");
-        return;
+        error = errorName + "Invalid flags supplied to constructor: '" + flags + "'";
+        return error;
         break;
       }
     }
@@ -70,4 +70,5 @@ module.exports = function(obj, flags, errors) {
   Object.defineProperty(obj, "debug", readonly);
   Object.defineProperty(obj, "unicode", readonly);
   Object.defineProperty(obj, "sticky", readonly);
+  return error;
 }

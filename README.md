@@ -106,6 +106,10 @@ See <a href="https://github.com/ldthomas/apg-js2-examples/tree/master/apg-exp">a
 `apg-exp`.
   
 **Documentation:**  
+<i><b>UPDATE:</b> All fatal errors encountered in the `apg-exp` constructor and its object functions are now reported
+with a thrown custom exception. Derived from the JavaScript Error object and named `ApgExpError`, it has functions
+`toText()` and `toHtml()` for user-friendly display of the errors in either plain ASCII text or HTML format.
+
 <i><b>UPDATE:</b> The files `apgexp.js` and `apgexp.css` have been added to make using `apg-exp`
 in a browser web page simple.</i><br>
 See the documentation in `src/apgexpjs-gen.js` and `src/apgexpcss-gen.js`.
