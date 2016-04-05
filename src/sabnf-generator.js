@@ -15,6 +15,11 @@ module.exports = function(input){
   var grammarResult;
   var grammarObject = null;
   var result = {obj: null, error: null, text: null, html: null};
+  var grammarText, grammarHtml;
+  var grammarTextTitle = "annotated grammar:\n";
+  var textErrorTitle = "annotated grammar errors:\n";
+  var htmlErrorTitle = "<h3>annotated grammar errors</h3>";
+  var grammarHtmlTitle = "<h3>annotated grammar</h3>";
   while(true){
     /* verify the input string - preliminary analysis*/
     try{
@@ -31,8 +36,12 @@ module.exports = function(input){
     }
     if(grammarResult.hasErrors){
       result.error = "grammar has validation errors";
-      result.text = grammarAnalysis.errorsToString(grammarResult.errors);
-      result.html = grammarAnalysis.errorsToHtml(grammarResult.errors);
+      result.text  = grammarTextTitle;
+      result.text += grammarAnalysis.toString();
+      result.text += textErrorTitle;
+      result.text += grammarAnalysis.errorsToString(grammarResult.errors);
+      result.html = grammarAnalysis.toHtml();
+      result.html += grammarAnalysis.errorsToHtml(grammarResult.errors);
       break;
     }
     
@@ -40,8 +49,12 @@ module.exports = function(input){
     grammarResult = parser.syntax(grammarAnalysis);
     if(grammarResult.hasErrors){
       result.error = "grammar has syntax errors";
-      result.text = grammarAnalysis.errorsToString(grammarResult.errors);
-      result.html = grammarAnalysis.errorsToHtml(grammarResult.errors);
+      result.text  = grammarTextTitle;
+      result.text += grammarAnalysis.toString();
+      result.text += textErrorTitle;
+      result.text += grammarAnalysis.errorsToString(grammarResult.errors);
+      result.html = grammarAnalysis.toHtml();
+      result.html += grammarAnalysis.errorsToHtml(grammarResult.errors);
       break;
     }
     
@@ -49,8 +62,12 @@ module.exports = function(input){
     grammarResult = parser.semantic();
     if(grammarResult.hasErrors){
       result.error = "grammar has semantic errors";
-      result.text = grammarAnalysis.errorsToString(grammarResult.errors);
-      result.html = grammarAnalysis.errorsToHtml(grammarResult.errors);
+      result.text  = grammarTextTitle;
+      result.text += grammarAnalysis.toString();
+      result.text += textErrorTitle;
+      result.text += grammarAnalysis.errorsToString(grammarResult.errors);
+      result.html = grammarAnalysis.toHtml();
+      result.html += grammarAnalysis.errorsToHtml(grammarResult.errors);
       break;
     }
     
@@ -58,8 +75,13 @@ module.exports = function(input){
     var attrErrors = attributes.getAttributes(grammarResult.rules, grammarResult.rulesLineMap);
     if(attrErrors.length > 0){
       result.error = "grammar has attribute errors";
-      result.text = grammarAnalysis.errorsToString(attrErrors);
-      result.html = grammarAnalysis.errorsToHtml(attrErrors);
+      result.text  = grammarTextTitle;
+      result.text += grammarAnalysis.toString();
+      result.text += textErrorTitle;
+      result.text += grammarAnalysis.errorsToString(attrErrors);
+      result.html = grammarAnalysis.toHtml() + grammarAnalysis.errorsToHtml(attrErrors);
+      result.html = grammarAnalysis.toHtml();
+      result.html += grammarAnalysis.errorsToHtml(attrErrors);
       break;
     }
     
