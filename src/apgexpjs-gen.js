@@ -3,15 +3,16 @@
 // ```
 // npm install -g browserify
 // npm install -g uglifyjs
-// browserify apgexpjs-gen.js | uglifyjs --compress --mangle > apgexp.js
+// browserify apgexpjs-gen.js > apgexp.js
+// uglifyjs apgexp.js --compress --mangle > apgexp-min.js
 // ```
-// To use it in a browser, include apgexp.js 
+// To use it in a browser, include apgexp-min.js (or apgexp.js)
 // and the style sheet, apgexp.css, in a script in the web page header.
 // ```
 //<head>
 // ...
 // <link rel="stylesheet" href="apgexp.css">
-// <script src="apgexp.js" charset="utf-8"></script>
+// <script src="apgexp-min.js" charset="utf-8"></script>
 // ...
 //</head>
 // ```
