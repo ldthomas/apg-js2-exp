@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>apg-exp</title>
+<meta charset="utf-8">
+<link rel="stylesheet" href="./css/BrightSide.css" type="text/css" />
+<script type="text/javascript" src="./import.js"></script>
+</head>
+<body>
+ <div id="wrap">
+  <div id="header"></div>
+  <div id="content-wrap">
+   <img src="./images/PointLobosCropped.jpg" width="820" height="120" alt="headerphoto" class="no-border" />
+   <div id="sidebar"></div>
+   <div id="main-2col">
+    <h1>result object</h1>
+    <p>
+    The result object contains the phrase matched by the pattern in the input string along with other information.
+    It has the location in the string where the match was found and parsing information.
+    It also has the location and phrase matched for <i>all</i> matches to <i>all</i> pattern syntax rules.
+    </p>
+    <h3>Properties</h3>
+    <p>
+    <ul>
+     <li>[0]</li>
+     <ul>
+      <li>the matched phrase</li>
+     </ul>
+     <li>input</li>
+     <ul>
+      <li>a copy of the input string</li>
+     </ul>
+     <li>index</li>
+     <ul>
+      <li>the index or offset from the beginning of the input string to the matched phrase</li>
+     </ul>
+     <li>length</li>
+     <ul>
+      <li>the length of the matched phrase</li>
+     </ul>
+     <li>treeDepth</li>
+     <ul>
+      <li>the maximum depth reached in the parse tree by the parser during the match</li>
+     </ul>
+     <li>nodeHits</li>
+     <ul>
+      <li>the number of unit steps required by the parser to make the match</li>
+     </ul>
+     <li>rules</li>
+     <ul>
+      <li>an object with phrase information for each of the rule names defined in the pattern syntax</li>
+      <li>rules[name] - null if no match to rule "name" was found</li>
+      <li>rules[name] - an array of phrase object, one item for each phrase</li>
+      <li>&nbsp;&nbsp;&nbsp;&nbsp; - the phrase object has the form {phrase: string, index: integer}</li>
+     </ul>
+    </ul>
+    </p>
+    <h3>Methods</h3>
+    <p>
+    <ul>
+     <li>toText()</li>
+     <ul>
+      <li>displays the result object in text format, suitable for output with <span class="inline-code">console.log()</span></li>
+     </ul>
+     <li>toHtml()</li>
+     <ul>
+      <li>displays the result object in HTML format, suitable for display on a web page</li>
+     </ul>
+     <li>toHtmlPage()</li>
+     <ul>
+      <li>displays the result object in HTML format as a complete, stand-alone web page</li>
+     </ul>
+    </ul>
+    </p>
+    <h3>Example</h3>
+    <p>
+<pre>
+var pattern, str, exp, result;
+pattern  = 'word  = 1*(alpha / num)\n';
+pattern += 'alpha = %d65-90 / %d97-122\n';
+pattern += 'num   = %d48-57\n';
+str = "ab12";
+exp = new ApgExp(pattern);
+result = exp.exec(str);
+/* result would be */
+</pre>
+</p>
+<p>
+<table class="apg-left-table">
+<tr><th>item</th><th>value</th><th>phrase</th></tr>
+<tr><td>[0]</td><td>0</td><td><span class="apg-match">ab12</span></td></tr>
+<tr><td>input</td><td>0</td><td><span class="apg-remainder">ab12</span></td></tr>
+<tr><td>index</td><td>0</td><td></td></tr>
+<tr><td>length</td><td>4</td><td></td></tr>
+<tr><td>tree depth</td><td>6</td><td></td></tr>
+<tr><td>node hits</td><td>26</td><td></td></tr>
+<tr><td>rules["word"]</td><td>{phrase: "abi2, index: 0}"</td></td>
+<tr><td>rules["alpha"]</td><td>{phrase: "a, index: 0}"</td></td>
+<tr><td>rules["alpha"]</td><td>{phrase: "b, index: 1}"</td></td>
+<tr><td>rules["num"]</td><td>{phrase: "i, index: 2}"</td></td>
+<tr><td>rules["num"]</td><td>{phrase: "2, index: 3}"</td></td>
+</table>
+</p>
+<p>
+Notice that <span class="inline-code">result[0]</span> and <span class="inline-code">result.rules["word"]</span> are the same.
+The first rule of the pattern syntax always defines the entire phrase.
+<span class="inline-code">result[0]</span> is simply an alias for compatibility with RegExp.
+    </p>
+   </div>
+  </div>
+  <div id="footer"></div>
+ </div>
+</body>
+</html>
