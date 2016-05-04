@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>apg-exp</title>
+<meta charset="utf-8">
+<link rel="stylesheet" href="./css/BrightSide.css" type="text/css" />
+<script type="text/javascript" src="./import.js"></script>
+</head>
+<body>
+ <div id="wrap">
+  <div id="header"></div>
+  <div id="content-wrap">
+   <img src="./images/PointLobosCropped.jpg" width="820" height="120" alt="headerphoto" class="no-border" />
+   <div id="sidebar"></div>
+   <div id="main-2col">
+    <h1>ApgExp.exec(input)</h1>
+    <p>The exec() method executes a search for a match in a specified string.
+    Returns a <a href="./result.html">result</a> object, or null.
+    This string may be specified as a JavaScript string or an array of integer character codes.
+    </p>
+    <h3>Syntax</h3>
+    <pre>
+var exp = new ApgExp(pattern, flags);
+var result = exp.exec(str);</pre>
+    <p></p>
+    <h3>Parameters</h3>
+    <p>
+    <ul>
+     <li>str</li>
+     <ul>
+      <li>string - The string to search for a pattern match in.</li>
+      <li>array - An array of the integer character codes of the string to search for a pattern match in.</li>
+    </ul>
+    </ul>
+    </p>
+    <h3>Return</h3>
+    <p>
+    If the match fails, the return is null.
+    Otherwise, the return is a <a href="./result.html">result</a> object
+    and properties of the ApgExp object are updated.
+    The result object contains the phrases matched to all of the rules
+    named in the pattern syntax.
+    </p>
+    <h3>Examples</h3>
+    <p>
+    <pre>
+var exp = new ApgExp(pattern);
+var result = exp.exec(string);</pre>
+    </p>
+    <p>
+    With the <span class="inline-code">g</span> or <span class="inline-code">y</span> flag set,
+    a successful match will increment <a href="./lastIndex.html">lastIndex</a> enabling multiple
+    calls on the same string.
+    <pre>
+var pattern = 'AsAndBs = "a" *"b"\n';
+var str = "abbcccabxx";
+var exp = new ApgExp(pattern, "g");
+while(true){
+var result = exp.exec(str);
+  if(result){
+    console.log("found: " + result[0] + " :at: " + result.index);
+  }else{
+    break;
+  }
+}
+/* returns */
+found: abb :at: 0
+found: ab :at: 6</pre>
+    </p>
+    <p>
+    Note that patterns, in general, can match empty strings (as, in fact, can regular expressions).
+    To be safe, a loop as above should be used instead of the more compact, but possibly infinite:
+    <pre>
+var exp, result;
+exp = new ApgExp(pattern, "g");
+while(result = exp.exec(str)){
+    console.log("found: " + result[0] + " :at: " + result.index);
+}</pre>
+    </p>
+   </div>
+  </div>
+  <div id="footer"></div>
+ </div>
+</body>
+</html>

@@ -2255,13 +2255,15 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
 //<head>
 // ...
 // <link rel="stylesheet" href="apgexp.css">
+// <script src="apgexp.js" charset="utf-8"></script>
+// <!-- or -->
 // <script src="apgexp-min.js" charset="utf-8"></script>
 // ...
 //</head>
 // ```
 // You can now access `apg-exp` and `apg-lib` 
 // in your web page JavaScript
-// through the variables `window.apgexp` 
+// through the variables `window.ApgExp` 
 // and `window.apglib` . e. g.
 // ```
 //  <script>
@@ -2273,12 +2275,12 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
 //    */
 //    var exp = new ApgExp(grammar);
 //    var result = exp.exec(str);
-//    ... /* do something with result */
+//        /* do something with result */
 //    /*
 //     * use an apg-lib utilities function
 //    */
 //    var strHtml = apglib.utils.stringToAsciiHtml(str);
-//    ... /* do something with strHtml */
+//        /* do something with strHtml */
 //  }
 //  </script>
 // ```
@@ -3287,20 +3289,20 @@ var sLastMatchToText = function(exp) {
   }
   txt += "\n";
   txt += "alias:\n";
-  txt += " [$_]: ";
+  txt += ' ["$_"]: ';
   txt += exp['$_'];
   txt += "\n";
-  txt += " [$`]: ";
+  txt += ' ["$`"]: ';
   txt += exp['$`'];
-  txt += "\n";
-  txt += " [$&]: ";
+  txt += '\n';
+  txt += ' ["$&"]: ';
   txt += exp['$&'];
-  txt += "\n";
-  txt += " [$']: ";
+  txt += '\n';
+  txt += ' ["$\'"]: ';
   txt += exp["$'"];
-  txt += "\n";
+  txt += '\n';
   for ( var name in exp.rules) {
-    txt += " [${" + name + "}]: "
+    txt += ' ["${' + name + '}"]: '
     txt += exp['${' + name + '}'];
     txt += "\n";
   }
@@ -3391,28 +3393,28 @@ var sLastMatchToHtml = function(exp) {
   html += '<th>alias</th><th>phrase</th>';
   html += '</tr>\n';
   html += '<tr>';
-  html += '<td>[$_]</td>';
+  html += '<td>["$_"]</td>';
   html += '<td>' + phraseStyle(exp['$_']) + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$`]</td>';
+  html += '<td>["$`"]</td>';
   html += '<td>' + phraseStyle(exp['$`']) + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$&]</td>';
+  html += '<td>["$&"]</td>';
   html += '<td>' + phraseStyle(exp['$&'], "match") + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$\']</td>';
+  html += '<td>["$\'"]</td>';
   html += '<td>' + phraseStyle(exp['$\'']) + '</td>';
   html += '</tr>\n';
 
   for ( var name in exp.rules) {
     html += '<tr>';
-    html += '<td>[${' + name + '}]</td>';
+    html += '<td>["${' + name + '}"]</td>';
     html += '<td>' + phraseStyle(exp['${' + name + '}']) + '</td>';
     html += '</tr>\n';
   }
@@ -3660,20 +3662,20 @@ var uLastMatchToText = function(exp, mode) {
   }
   txt += "\n";
   txt += "  alias:\n";
-  txt += "   [$_]: ";
+  txt += '   ["$_"]: ';
   txt += charsToMode(exp['$_'], mode);
   txt += "\n";
-  txt += "   [$`]: ";
+  txt += '   ["$`"]: ';
   txt += charsToMode(exp['$`'], mode);
   txt += "\n";
-  txt += "   [$&]: ";
+  txt += '   ["$&"]: ';
   txt += charsToMode(exp['$&'], mode);
   txt += "\n";
-  txt += "   [$']: ";
+  txt += '   ["$\'"]: ';
   txt += charsToMode(exp["$'"], mode);
   txt += "\n";
   for ( var name in exp.rules) {
-    txt += "   [${" + name + "}]: "
+    txt += '   ["${' + name + '}"]: '
     txt += (exp['${' + name + '}']) ? charsToMode(exp['${' + name + '}'], mode) : "undefined";
     txt += "\n";
   }
@@ -3771,28 +3773,28 @@ var uLastMatchToHtml = function(exp, mode) {
   html += '<th>alias</th><th>phrase</th>';
   html += '</tr>\n';
   html += '<tr>';
-  html += '<td>[$_]</td>';
+  html += '<td>["$_"]</td>';
   html += '<td>' + phraseStyle(charsToMode(exp['$_'], mode)) + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$`]</td>';
+  html += '<td>["$`"]</td>';
   html += '<td>' + phraseStyle(charsToMode(exp['$`'], mode)) + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$&]</td>';
+  html += '<td>["$&"]</td>';
   html += '<td>' + phraseStyle(charsToMode(exp['$&'], mode), "match") + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$\']</td>';
+  html += '<td>["$\'"]</td>';
   html += '<td>' + phraseStyle(charsToMode(exp['$\''], mode)) + '</td>';
   html += '</tr>\n';
 
   for ( var name in exp.rules) {
     html += '<tr>';
-    html += '<td>[${' + name + '}]</td>';
+    html += '<td>["${' + name + '}"]</td>';
     if (exp['${' + name + '}']) {
       html += '<td>' + phraseStyle(charsToMode(exp['${' + name + '}'], mode)) + '</td>';
     } else {

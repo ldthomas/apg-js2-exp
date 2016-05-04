@@ -8,7 +8,9 @@
   },
   "files": [
     "src",
+    "guide",
     "apgexp.js",
+    "apgexp-min.js",
     "apgexp.css",
     "index.md",
     "docco-gen"

@@ -192,20 +192,20 @@ var sLastMatchToText = function(exp) {
   }
   txt += "\n";
   txt += "alias:\n";
-  txt += " [$_]: ";
+  txt += ' ["$_"]: ';
   txt += exp['$_'];
   txt += "\n";
-  txt += " [$`]: ";
+  txt += ' ["$`"]: ';
   txt += exp['$`'];
-  txt += "\n";
-  txt += " [$&]: ";
+  txt += '\n';
+  txt += ' ["$&"]: ';
   txt += exp['$&'];
-  txt += "\n";
-  txt += " [$']: ";
+  txt += '\n';
+  txt += ' ["$\'"]: ';
   txt += exp["$'"];
-  txt += "\n";
+  txt += '\n';
   for ( var name in exp.rules) {
-    txt += " [${" + name + "}]: "
+    txt += ' ["${' + name + '}"]: '
     txt += exp['${' + name + '}'];
     txt += "\n";
   }
@@ -296,28 +296,28 @@ var sLastMatchToHtml = function(exp) {
   html += '<th>alias</th><th>phrase</th>';
   html += '</tr>\n';
   html += '<tr>';
-  html += '<td>[$_]</td>';
+  html += '<td>["$_"]</td>';
   html += '<td>' + phraseStyle(exp['$_']) + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$`]</td>';
+  html += '<td>["$`"]</td>';
   html += '<td>' + phraseStyle(exp['$`']) + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$&]</td>';
+  html += '<td>["$&"]</td>';
   html += '<td>' + phraseStyle(exp['$&'], "match") + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$\']</td>';
+  html += '<td>["$\'"]</td>';
   html += '<td>' + phraseStyle(exp['$\'']) + '</td>';
   html += '</tr>\n';
 
   for ( var name in exp.rules) {
     html += '<tr>';
-    html += '<td>[${' + name + '}]</td>';
+    html += '<td>["${' + name + '}"]</td>';
     html += '<td>' + phraseStyle(exp['${' + name + '}']) + '</td>';
     html += '</tr>\n';
   }
@@ -565,20 +565,20 @@ var uLastMatchToText = function(exp, mode) {
   }
   txt += "\n";
   txt += "  alias:\n";
-  txt += "   [$_]: ";
+  txt += '   ["$_"]: ';
   txt += charsToMode(exp['$_'], mode);
   txt += "\n";
-  txt += "   [$`]: ";
+  txt += '   ["$`"]: ';
   txt += charsToMode(exp['$`'], mode);
   txt += "\n";
-  txt += "   [$&]: ";
+  txt += '   ["$&"]: ';
   txt += charsToMode(exp['$&'], mode);
   txt += "\n";
-  txt += "   [$']: ";
+  txt += '   ["$\'"]: ';
   txt += charsToMode(exp["$'"], mode);
   txt += "\n";
   for ( var name in exp.rules) {
-    txt += "   [${" + name + "}]: "
+    txt += '   ["${' + name + '}"]: '
     txt += (exp['${' + name + '}']) ? charsToMode(exp['${' + name + '}'], mode) : "undefined";
     txt += "\n";
   }
@@ -676,28 +676,28 @@ var uLastMatchToHtml = function(exp, mode) {
   html += '<th>alias</th><th>phrase</th>';
   html += '</tr>\n';
   html += '<tr>';
-  html += '<td>[$_]</td>';
+  html += '<td>["$_"]</td>';
   html += '<td>' + phraseStyle(charsToMode(exp['$_'], mode)) + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$`]</td>';
+  html += '<td>["$`"]</td>';
   html += '<td>' + phraseStyle(charsToMode(exp['$`'], mode)) + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$&]</td>';
+  html += '<td>["$&"]</td>';
   html += '<td>' + phraseStyle(charsToMode(exp['$&'], mode), "match") + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$\']</td>';
+  html += '<td>["$\'"]</td>';
   html += '<td>' + phraseStyle(charsToMode(exp['$\''], mode)) + '</td>';
   html += '</tr>\n';
 
   for ( var name in exp.rules) {
     html += '<tr>';
-    html += '<td>[${' + name + '}]</td>';
+    html += '<td>["${' + name + '}"]</td>';
     if (exp['${' + name + '}']) {
       html += '<td>' + phraseStyle(charsToMode(exp['${' + name + '}'], mode)) + '</td>';
     } else {
