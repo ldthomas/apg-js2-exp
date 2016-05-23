@@ -237,7 +237,10 @@ var forward = function(p) {
 var setLastIndex = function(lastIndex, flag, parserResult) {
   if (flag) {
     if (parserResult.success) {
-      return parserResult.index + parserResult.length;
+      var ret = parserResult.index;
+      /* bump-along mode - increment is never zero */
+      ret += (parserResult.length > 0) ? parserResult.length : 1;
+      return ret;
     }
     return 0;
   }

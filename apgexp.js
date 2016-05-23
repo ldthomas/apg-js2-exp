@@ -2529,7 +2529,10 @@ var forward = function(p) {
 var setLastIndex = function(lastIndex, flag, parserResult) {
   if (flag) {
     if (parserResult.success) {
-      return parserResult.index + parserResult.length;
+      var ret = parserResult.index;
+      /* bump-along mode - increment is never zero */
+      ret += (parserResult.length > 0) ? parserResult.length : 1;
+      return ret;
     }
     return 0;
   }
@@ -3662,20 +3665,20 @@ var uLastMatchToText = function(exp, mode) {
   }
   txt += "\n";
   txt += "  alias:\n";
-  txt += "   [$_]: ";
+  txt += '   ["$_"]: ';
   txt += charsToMode(exp['$_'], mode);
   txt += "\n";
-  txt += "   [$`]: ";
+  txt += '   ["$`"]: ';
   txt += charsToMode(exp['$`'], mode);
   txt += "\n";
-  txt += "   [$&]: ";
+  txt += '   ["$&"]: ';
   txt += charsToMode(exp['$&'], mode);
   txt += "\n";
-  txt += "   [$']: ";
+  txt += '   ["$\'"]: ';
   txt += charsToMode(exp["$'"], mode);
   txt += "\n";
   for ( var name in exp.rules) {
-    txt += "   [${" + name + "}]: "
+    txt += '   ["${' + name + '}"]: '
     txt += (exp['${' + name + '}']) ? charsToMode(exp['${' + name + '}'], mode) : "undefined";
     txt += "\n";
   }
@@ -3773,28 +3776,28 @@ var uLastMatchToHtml = function(exp, mode) {
   html += '<th>alias</th><th>phrase</th>';
   html += '</tr>\n';
   html += '<tr>';
-  html += '<td>[$_]</td>';
+  html += '<td>["$_"]</td>';
   html += '<td>' + phraseStyle(charsToMode(exp['$_'], mode)) + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$`]</td>';
+  html += '<td>["$`"]</td>';
   html += '<td>' + phraseStyle(charsToMode(exp['$`'], mode)) + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$&]</td>';
+  html += '<td>["$&"]</td>';
   html += '<td>' + phraseStyle(charsToMode(exp['$&'], mode), "match") + '</td>';
   html += '</tr>\n';
 
   html += '<tr>';
-  html += '<td>[$\']</td>';
+  html += '<td>["$\'"]</td>';
   html += '<td>' + phraseStyle(charsToMode(exp['$\''], mode)) + '</td>';
   html += '</tr>\n';
 
   for ( var name in exp.rules) {
     html += '<tr>';
-    html += '<td>[${' + name + '}]</td>';
+    html += '<td>["${' + name + '}"]</td>';
     if (exp['${' + name + '}']) {
       html += '<td>' + phraseStyle(charsToMode(exp['${' + name + '}'], mode)) + '</td>';
     } else {
@@ -6586,9 +6589,6 @@ module.exports = function() {
     footer += 'ABG - anchor - begin of input string<br>\n';
     footer += 'AEN - anchor - end of input string<br>\n';
     footer += '</p>\n';
-    /* close the page */
-    footer += '</body>\n';
-    footer += '</html>\n';
     return footer;
   }
   /* Returns the filtered records, formatted as an HTML table. */

@@ -3,6 +3,7 @@
 <head>
 <title>apg-exp</title>
 <meta charset="utf-8">
+<link rel="stylesheet" href="./css/apgexp.css" type="text/css" />
 <link rel="stylesheet" href="./css/BrightSide.css" type="text/css" />
 <script type="text/javascript" src="./import.js"></script>
 </head>
@@ -15,8 +16,8 @@
    <div id="main-2col">
     <h1>ApgExpError</h1>
     <p>
-    If the ApgExp constructor encounters and error it will throw an ApgExpError exception object.
-    Derived from Error, it special display functions. If the SABNF pattern syntax has errors,
+    If the <kbd>ApgExp</kbd> constructor encounters and error it will throw an <kbd>ApgExpError</kbd> exception object.
+    Derived from JavaScript's <a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error">Error</a> object, it has special display member functions. If the SABNF pattern syntax has errors,
     specially formatted data is added to the object.
 </p>
     <h3>Properties</h3>
@@ -47,10 +48,11 @@
      </ul>
     </ul>
     </p>
-    <h3>Example</h3>
-    <p>
+    <h3>Example 1</h3>
+    <p>The general set up for catching pattern syntax errors and failed pattern matches.</p>
     <pre>
-try{
+try{ 
+  var exp, pattern, flags, result, strintToTest;
   exp    = new ApgExp(pattern, flags);
   result = exp.exec(stringToTest);
   if(result){
@@ -65,8 +67,48 @@ try{
   }else{
     /* handle other exceptions */
   }
+}</pre>
+    <h3>Example 2</h3>
+    <p>A pattern syntax error as text.</p>
+    <pre>
+var exp, pattern, result;
+pattern  = 'word  = alpha *(alpha / num\n';
+pattern += 'alpha = %d65-90 / %d97-122\n';
+pattern += '1num   = %d48-57\n';
+try{
+  exp = new ApgExp(pattern);
+}catch(e){
+  if(e.name === "ApgExpError"){
+    console.log(e.toText());
+  }else{
+    console.log("other exception: "+e.message);
+  }
 }
-    </p>
+/ * result */
+grammar has syntax errors
+0: 0: 15: word  = alpha * >> (alpha / num
+0: 0: 15: error: Group, (...), opened but not closed.
+0: 0: 15: word  = alpha * >> (alpha / num
+0: 0: 15: error: Unrecognized SABNF element.
+2: 55: 0:  >> 1num   = %d48-57
+2: 55: 0: error: Rule names must be alphanum and begin with alphabetic character.
+</pre>
+    <h3>Example 3</h3>
+    <p>Same as example 2, except pattern syntax error as HTML.</p>
+    <pre>
+$("#this-page").html(e.toHtml());
+/ * result */
+</pre>
+<h3>grammar&nbsp;has&nbsp;syntax&nbsp;errors</h3>
+<p><table class="apg-last-left-table margin">
+<tr><th>line<br>no.</th><th>line<br>offset</th><th>error<br>offset</th><th><br>text</th></tr>
+<tr><td>0</td><td>0</td><td>15</td><td>word&nbsp;&nbsp;=&nbsp;alpha&nbsp;*<span class="apg-nomatch">&raquo;</span>(alpha&nbsp;/&nbsp;num<span class="apg-ctrl-char">LF</span></td></tr>
+<tr><td colspan="3"></td><td>&uarr;:&nbsp;Group,&nbsp;(...),&nbsp;opened&nbsp;but&nbsp;not&nbsp;closed.</td></tr>
+<tr><td>0</td><td>0</td><td>15</td><td>word&nbsp;&nbsp;=&nbsp;alpha&nbsp;*<span class="apg-nomatch">&raquo;</span>(alpha&nbsp;/&nbsp;num<span class="apg-ctrl-char">LF</span></td></tr>
+<tr><td colspan="3"></td><td>&uarr;:&nbsp;Unrecognized&nbsp;SABNF&nbsp;element.</td></tr>
+<tr><td>2</td><td>55</td><td>0</td><td><span class="apg-nomatch">&raquo;</span>1num&nbsp;&nbsp;&nbsp;=&nbsp;%d48-57<span class="apg-ctrl-char">LF</span></td></tr>
+<tr><td colspan="3"></td><td>&uarr;:&nbsp;Rule&nbsp;names&nbsp;must&nbsp;be&nbsp;alphanum&nbsp;and&nbsp;begin&nbsp;with&nbsp;alphabetic&nbsp;character.</td></tr>
+</table></p>
    </div>
   </div>
   <div id="footer"></div>

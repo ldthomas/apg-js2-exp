@@ -14,34 +14,49 @@
    <div id="sidebar"></div>
    <div id="main-2col">
     <!-- page content goes here -->
-    <h1>ApgExp.ast</h1>
-    <h4><i>TBD: Coming Soon</i></h4>
-    <p>Explanation</p>
-    <h3>Syntax</h3>
-    <p></p>
-    <h3>Parameters</h3>
+    <h1>Property: ast</h1>
     <p>
-    <ul>
-     <li>param 1</li>
-     <ul>
-      <li>sub 1</li>
-      <li>sub 2</li>
-     </ul>
-     <li>param 2</li>
-     <ul>
-      <li>sub 1</li>
-      <li>sub 2</li>
-     </ul>
-    </ul>
+    The <kbd>ApgExp</kbd> object retains a copy of the <b>APG</b> parser's
+    Abstract Syntax Tree (AST) object.
+    The AST object is especially useful for making complex translations 
+    of the matched phrase.
+    The use and details of the AST are beyond the scope of this guide.
+    See <a href="https://github.com/ldthomas/apg-js2-examples/tree/master/ast">here</a>
+    and <a href="https://github.com/ldthomas/apg-js2-examples/tree/master/apg-exp">here</a> for examples of its use. 
     </p>
-    <h3>Return</h3>
-    <p>Return value description</p>
-    <h3>Examples</h3>
-    <p>
+    <h3>Example</h3>
     <pre>
-var exp = new ApgExp(pattern);
-var return = exp.exec(string);</pre>
-    </p>
+var pattern, exp, str, result;
+pattern  = 'word  = alpha *(alpha / num)\n';
+pattern += 'alpha = %d65-90 / %d97-122\n';
+pattern += 'num   = %d48-57\n';
+exp = new ApgExp(pattern);
+str = "ab12";
+result = exp.exec(str);
+console.log("exp.ast in XML format:");
+console.log(exp.ast.toXml());
+/* result */
+exp.ast in XML format:
+&lt;?xml version="1.0" encoding="utf-8"?>
+&lt;root nodes="5" characters="4">
+&lt;!-- input string, decimal integer character codes -->
+  97,98,49,50
+ &lt;node name="word" index="0" length="4">
+   97,98,49,50
+  &lt;node name="alpha" index="0" length="1">
+    97
+  &lt;/node>&lt;!-- name="alpha" -->
+  &lt;node name="alpha" index="1" length="1">
+    98
+  &lt;/node>&lt;!-- name="alpha" -->
+  &lt;node name="num" index="2" length="1">
+    49
+  &lt;/node>&lt;!-- name="num" -->
+  &lt;node name="num" index="3" length="1">
+    50
+  &lt;/node>&lt;!-- name="num" -->
+ &lt;/node>&lt;!-- name="word" -->
+&lt;/root>
    </div>
   </div>
   <div id="footer"></div>

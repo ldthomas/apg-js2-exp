@@ -419,7 +419,7 @@ span.inline-code{
 }
 
 div#main-2col ul {
-    font-weight: bold;
+    font-weight: normal;
     list-style-type: none;
 }
 
@@ -442,4 +442,44 @@ div#main-2col pre {
   border-left: 4px solid #4284B0; 
   border-left: 4px solid #CCC; 
 	
+}
+
+body.if{
+  margin: 0;
+  padding: 0;
+  font: .80em/1.5em  Verdana, Tahoma, Helvetica, sans-serif;
+  color: #525252; 
+  background: white;
+  text-align: center;
+}
+
+#menu-frame{
+  width: 100%;
+  height: 500px;
+  border: none;
+}
+
+kbd {
+  font-family: "Courier New", monospace;
+  background: #FAFAFA;
+  color: #404040;
+  /*
+  border-radius: 3px;
+  border: 1px solid #A9A9A9;
+  */
+}
+span.mono{
+  font-family: "Courier New", monospace;
+  background: #FAFAFA;
+  border-radius: 3px;
+  border: 1px solid #A9A9A9;
+}
+
+.margin{
+  margin: 10px 15px;
+}
+
+table.margin td{
+	vertical-align: top;
+	line-height: 150%;
 }

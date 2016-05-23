@@ -14,33 +14,21 @@
    <div id="sidebar"></div>
    <div id="main-2col">
     <!-- page content goes here -->
-    <h1>ApgExp.trace</h1>
-    <h4><i>TBD: Coming Soon</i></h4>
-    <p>Explanation</p>
+    <h1>Property: trace</h1>
     <h3>Syntax</h3>
-    <p></p>
-    <h3>Parameters</h3>
-    <p>
-    <ul>
-     <li>param 1</li>
-     <ul>
-      <li>sub 1</li>
-      <li>sub 2</li>
-     </ul>
-     <li>param 2</li>
-     <ul>
-      <li>sub 1</li>
-      <li>sub 2</li>
-     </ul>
-    </ul>
-    </p>
-    <h3>Return</h3>
-    <p>Return value description</p>
-    <h3>Examples</h3>
-    <p>
     <pre>
-var exp = new ApgExp(pattern);
-var return = exp.exec(string);</pre>
+var exp    = new ApgExp(pattern, "d");
+var result = exp.exec(input);
+var html   = exp.trace.toHtml();
+</pre>
+    <p>
+    If the debug mode flag is set, then <kbd>exp.trace</kbd> is the <b>APG</b> trace object.
+    <kbd>exp.trace</kbd> can be used to display the path of the parser through the parse tree.
+    If the debug property is not set, <kbd>exp.trace</kbd> is undefined.
+    </p>
+    <h3>Example</h3>
+    <p>
+    See the <a href="./debug.html">debug mode example</a>.
     </p>
    </div>
   </div>

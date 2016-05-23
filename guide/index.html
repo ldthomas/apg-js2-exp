@@ -42,7 +42,7 @@
 var ApgExp = require("apg-exp");</pre>
     </p>
     <p>
-    To acquire the pre-defined constructor variable <span class="inline-code">ApgExp</span> in a web page use:
+    To acquire the pre-defined constructor variable <kbd>ApgExp</kbd> in a web page use:
      <pre>git clone https://github.com/ldthomas/apg-js2-exp.git repo
 &lt;script src="./repo/apgexp.js" charset="utf-8">&lt;/script>
 /* or for the minimized version */  
@@ -50,7 +50,7 @@ var ApgExp = require("apg-exp");</pre>
     </p>
     <p>
     In either case, it will be assumed throughout the remainder of this guide that the <b>apg-exp</b> constructor
-    is available in the user's code as <span class="inline-code">ApgExp</span>.
+    is available in the user's code as <kbd>ApgExp</kbd>.
     </p>
     <h3>Syntax</h3>
     <p>
@@ -60,40 +60,38 @@ var ApgExp = require("apg-exp");</pre>
     <p>
     <ul>
     <li>
-    pattern
+    <b>pattern:</b> string or object
     </li>
     <ul>
-    <li>string or parser object</li>
     <li>string - a valid SABNF pattern syntax</li>
     <li>object - an instantiated <b>APG</b> parser object</li>
     </ul>
     <li>
-    flags
+    <b><a href="./flags.html">flags</a>:</b> string, any of the characters "gyud"
     </li>
     <ul>
-    <li>none - default. Sets <a href="./lastIndex.html">lastIndex</a> to zero after each match attempt.</li>
-    <li>g - global. Advances lastIndex after each successful match.
-    See <a href="./exec.html">exec()</a> and <a href="./replace.html">replace()</a></li>
-    <li>y - sticky. Anchors the search to lastIndex. Advances lastIndex on each successful match.</li>
-    <li>u - unicode. Returns matched patterns as integer arrays of character codes, rather than strings</li>
-    <li>d - debug. Adds the <b>APG</b> trace object to exp.</li>
+    <li>default - Sets <kbd><a href="./lastIndex.html">lastIndex</a></kbd> to zero after each match attempt.</li>
+    <li>g - <a href="./global.html">global</a> Advances lastIndex after each successful match.
+    </li>
+    <li>y - <a href="./sticky.html">sticky</a> Anchors the search to <kbd>lastIndex</kbd>.
+    Advances <kbd>lastIndex</kbd> on each successful match.</li>
+    <li>u - <a href="./unicode.html">unicode</a> Returns matched patterns as integer arrays of character codes, rather than strings</li>
+    <li>d - <a href="./debug.html">debug</a> Adds the <b>APG</b> trace object to exp.</li>
     </ul>
     <ul>
     </ul>
     <li>
-    nodeHits
+    <b><a href="./nodeHits.html">nodeHits</a>:</b> integer > 0: default: <kbd>Infinity</kbd>
     </li>
     <ul>
-    <li>integer > 0, default, Infinity</li>
     <li>Constrains the maximum number of parser steps taken to nodeHits.
     Can be used to protect against "exponential-time" or "catestrophic-backtracking" pattern syntaxes.</li>
     </ul>
     <li>
-    treeDepth
+    <b><a href="./nodeHits.html">treeDepth</a>:</b> integer > 0: default: <kbd>Infinity</kbd>
     </li>
     <ul>
-    <li>integer > 0, default, Infinity</li>
-    <li>Constrains the maximum parse tree depth treeDepth.
+    <li>Constrains the maximum parse tree depth to treeDepth.
     Can be used to protect against "exponential-time" or "catestrophic-backtracking" pattern syntaxes.</li>
     </ul>
     </ul>
