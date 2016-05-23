@@ -8,6 +8,8 @@
 *.zip
 *.tgz
 cmsg
+js-gen
+css-gen
 *.html
 !guide/*.html
 **html/

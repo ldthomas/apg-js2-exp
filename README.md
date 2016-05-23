@@ -1,4 +1,6 @@
 # apg-exp - APG Expressions
+*<b>Update:</b> See the complete user's guide at ./guide/index.html or at the [**APG** website](http://coasttocoastresearch.com/docjs2/apg-exp-guide/index.html).*
+
 `apg-exp` is a regex-like pattern-matching engine that uses a superset of the [ABNF syntax](https://tools.ietf.org/html/rfc5234) for the pattern definitions and [**APG**](https://github.com/ldthomas/apg-js2) to create and apply the pattern-matching parser. By way of introduction, the [regex Wikipedia article](https://en.wikipedia.org/wiki/Regular_expression) would be a good start and Jeffrey Friedl's book, [*Mastering Regular Expressions*](http://www.amazon.com/Mastering-Regular-Expressions-Jeffrey-Friedl/dp/0596528124) would be a lot better and more complete. This introduction will just mention features, a little on motivation and try to point out some possible advantages to `apg-exp`.
 
 **Features:**  

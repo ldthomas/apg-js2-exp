@@ -2529,7 +2529,10 @@ var forward = function(p) {
 var setLastIndex = function(lastIndex, flag, parserResult) {
   if (flag) {
     if (parserResult.success) {
-      return parserResult.index + parserResult.length;
+      var ret = parserResult.index;
+      /* bump-along mode - increment is never zero */
+      ret += (parserResult.length > 0) ? parserResult.length : 1;
+      return ret;
     }
     return 0;
   }
@@ -6608,9 +6611,6 @@ module.exports = function() {
     footer += 'ABG - anchor - begin of input string<br>\n';
     footer += 'AEN - anchor - end of input string<br>\n';
     footer += '</p>\n';
-    /* close the page */
-    footer += '</body>\n';
-    footer += '</html>\n';
     return footer;
   }
   /* Returns the filtered records, formatted as an HTML table. */

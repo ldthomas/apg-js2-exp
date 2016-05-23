@@ -14,34 +14,37 @@
    <div id="sidebar"></div>
    <div id="main-2col">
     <!-- page content goes here -->
-    <h1>ApgExp.lastIndex</h1>
-    <h4><i>TBD: Coming Soon</i></h4>
-    <p>Explanation</p>
+    <h1>Property: lastIndex</h1>
     <h3>Syntax</h3>
-    <p></p>
-    <h3>Parameters</h3>
-    <p>
-    <ul>
-     <li>param 1</li>
-     <ul>
-      <li>sub 1</li>
-      <li>sub 2</li>
-     </ul>
-     <li>param 2</li>
-     <ul>
-      <li>sub 1</li>
-      <li>sub 2</li>
-     </ul>
-    </ul>
-    </p>
-    <h3>Return</h3>
-    <p>Return value description</p>
-    <h3>Examples</h3>
-    <p>
     <pre>
 var exp = new ApgExp(pattern);
-var return = exp.exec(string);</pre>
+var n; /* integer > 0 */
+exp.lastIndex = n;
+</pre>
+    <p>
+    Regardless of the matching mode, the pattern match attempt is made starting at index,
+    <kbd>exp.lastIndex</kbd>.
+    The user can set <kbd>exp.lastIndex</kbd> to any value prior to the match attempt.
+    The value of <kbd>exp.lastIndex</kbd> after the match attempt is
+    <a href="./flags.html">mode</a> and result dependent.
     </p>
+    <h3>Example</h3>
+    <p>
+    <pre>
+var pattern, str, exp, result;    
+pattern = 'pattern = "abc"\n';
+exp = new ApgExp(pattern);
+exp.lastIndex = 6;
+str = "---abc---ABC---";
+result = exp.exec(str);
+if(result){
+  console.log("found: " + result[0] + " :at: " + result.index);
+}else{
+  console.log("result: null");
+}
+/* returns */
+found: ABC :at: 9
+</pre>
    </div>
   </div>
  <div id="footer"></div>

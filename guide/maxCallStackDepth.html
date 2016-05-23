@@ -14,34 +14,38 @@
    <div id="sidebar"></div>
    <div id="main-2col">
     <!-- page content goes here -->
-    <h1>ApgExp.maxCallStackDepth()</h1>
-    <h4><i>TBD: Coming Soon</i></h4>
-    <p>Explanation</p>
+    <h1>Method: maxCallStackDepth()</h1>
+    <p>
+    <kbd>maxCallStackDepth()</kbd> returns an estimate of the maximum call stack depth.
+    It is well known that recursive-descent parsers can exhibit exponential behavior
+    for some patterns. This is due to recursion which opens the possibility that
+    the parser may extend deep into the parse tree. This function is a simple
+    helper to estimate the maximum call depth or recursion depth
+    available to the current JavaScript engine. Because the call depth
+    is limited by the call-stack space, the actual depth will be dependent
+    on how much data a recursive function leaves on each stack frame.
+    Therefore, the return of this function should be regarded as an upper bound.
+    </p>
     <h3>Syntax</h3>
-    <p></p>
+    <pre>
+var exp = new ApgExp(pattern[, flags]);
+var depth = exp.maxCallStackDepth();</pre>
     <h3>Parameters</h3>
     <p>
-    <ul>
-     <li>param 1</li>
-     <ul>
-      <li>sub 1</li>
-      <li>sub 2</li>
-     </ul>
-     <li>param 2</li>
-     <ul>
-      <li>sub 1</li>
-      <li>sub 2</li>
-     </ul>
-    </ul>
+    <i>none</i>
     </p>
     <h3>Return</h3>
-    <p>Return value description</p>
-    <h3>Examples</h3>
-    <p>
+    <p>integer: An upper bound on the current JavaScript engine's call stack depth.</p>
+    <h3>Example</h3>
     <pre>
-var exp = new ApgExp(pattern);
-var return = exp.exec(string);</pre>
-    </p>
+var pattern, exp, result;
+pattern  = 'word  = "abc"\n';
+exp = new ApgExp(pattern);
+result = exp.maxCallStackDepth();
+console.log("max depth: "+result);
+/* returns */
+max depth: 15699
+</pre>
    </div>
   </div>
   <div id="footer"></div>

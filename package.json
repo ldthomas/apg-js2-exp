@@ -1,7 +1,7 @@
 {
   "name": "apg-exp",
-  "version": "1.1.3",
-  "description": "Pattern-matching tool similar to RegExp, except uses ABNF grammar instead of regular expressions.",
+  "version": "1.0.4",
+  "description": "Pattern-matching alternative to RegExp. Replaces the regular expression syntax with ABNF. Adds APG parser features such as User Defined Terminals and acces to the AST.",
   "main": "./src/apg-exp.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
