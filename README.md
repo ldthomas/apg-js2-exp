@@ -8,7 +8,7 @@ It will walk you through the basics from simple to some fairly sophisticated pat
 **Complete User's Guide:** A complete user's guide can be found at `./guide/index.html` 
 or the [**APG** website](http://coasttocoastresearch.com/docjs2/apg-exp-guide/index.html).
 
-**Version 1.1.0:** There are no functional changes in version 1.1.0. Only minor "under the hood" changes for compatability with [apg 3.0.0](https://github.com/ldthomas/apg-js2) have been made.
+**Version 2.0.0:** There are no functional changes in version 2.0.0. Only minor "under the hood" changes for compatability with [apg 3.0.0](https://github.com/ldthomas/apg-js2) have been made.
 
 **apg-exp:** By way of introduction, the [regex Wikipedia article](https://en.wikipedia.org/wiki/Regular_expression) would be a good start and Jeffrey Friedl's book, [*Mastering Regular Expressions*](http://www.amazon.com/Mastering-Regular-Expressions-Jeffrey-Friedl/dp/0596528124) would be a lot better and more complete. This introduction will just mention features, a little on motivation and try to point out some possible advantages to **apg-exp**.
 
