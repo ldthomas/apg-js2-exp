@@ -8,14 +8,10 @@
 *.zip
 *.tgz
 cmsg
-js-gen
-css-gen
-*.html
-!guide/*.html
-**html/
+build
 **RemoteSystemsTempFiles/
-**workfiles/
 **node_modules/
+**work/
 **test/
 **stress-test/
 **docs/

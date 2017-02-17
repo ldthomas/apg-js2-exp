@@ -3,7 +3,7 @@
 "use strict;"
 var apglib = require("apg-lib");
 var utils = apglib.utils;
-var style = utils.styleNames;
+var style = apglib.style;
 var MODE_HEX = 16;
 var MODE_DEC = 10;
 var MODE_ASCII = 8;
@@ -73,7 +73,7 @@ var sResultToText = function(result) {
 var sResultToHtml = function(result) {
   var html = "";
   var caption = "result:";
-  html += '<table class="' + style.CLASS_LEFT_TABLE + '">\n';
+  html += '<table class="' + style.CLASS_STATE + '">\n';
   html += '<caption>' + caption + '</caption>\n';
   html += '<tr>';
   html += '<th>item</th><th>value</th><th>phrase</th>';
@@ -215,7 +215,7 @@ var sLastMatchToText = function(exp) {
 var sLastMatchToHtml = function(exp) {
   var html = "";
   var caption = "last match:";
-  html += '<table class="' + style.CLASS_LEFT_TABLE + '">\n';
+  html += '<table class="' + style.CLASS_STATE + '">\n';
   html += '<caption>' + caption + '</caption>\n';
   html += '<tr>';
   html += '<th>item</th><th>value</th>';
@@ -449,7 +449,7 @@ var uResultToHtml = function(result, mode) {
   var html = "";
   var caption = "result:";
   caption += "(" + modeToText(mode) + ")";
-  html += '<table class="' + style.CLASS_LEFT_TABLE + '">\n';
+  html += '<table class="' + style.CLASS_STATE + '">\n';
   html += '<caption>' + caption + '</caption>\n';
   html += '<tr>';
   html += '<th>item</th><th>value</th><th>phrase</th>';
@@ -590,7 +590,7 @@ var uLastMatchToHtml = function(exp, mode) {
   var html = "";
   var caption = "last match:";
   caption += "(" + modeToText(mode) + ")";
-  html += '<table class="' + style.CLASS_LEFT_TABLE + '">\n';
+  html += '<table class="' + style.CLASS_STATE + '">\n';
   html += '<caption>' + caption + '</caption>\n';
   html += '<tr>';
   html += '<th>item</th><th>value</th>';

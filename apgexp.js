@@ -19,9 +19,6 @@ var isArray = require('isarray')
 exports.Buffer = Buffer
 exports.SlowBuffer = SlowBuffer
 exports.INSPECT_MAX_BYTES = 50
-Buffer.poolSize = 8192 // not used by this implementation
-
-var rootParent = {}
 
 /**
  * If `Buffer.TYPED_ARRAY_SUPPORT`:
@@ -51,10 +48,15 @@ Buffer.TYPED_ARRAY_SUPPORT = global.TYPED_ARRAY_SUPPORT !== undefined
   ? global.TYPED_ARRAY_SUPPORT
   : typedArraySupport()
 
+/*
+ * Export kMaxLength after typed array support is determined.
+ */
+exports.kMaxLength = kMaxLength()
+
 function typedArraySupport () {
   try {
     var arr = new Uint8Array(1)
-    arr.foo = function () { return 42 }
+    arr.__proto__ = {__proto__: Uint8Array.prototype, foo: function () { return 42 }}
     return arr.foo() === 42 && // typed array instances can be augmented
         typeof arr.subarray === 'function' && // chrome 9-10 lack `subarray`
         arr.subarray(1, 1).byteLength === 0 // ie10 has broken `subarray`
@@ -69,6 +71,25 @@ function kMaxLength () {
     : 0x3fffffff
 }
 
+function createBuffer (that, length) {
+  if (kMaxLength() < length) {
+    throw new RangeError('Invalid typed array length')
+  }
+  if (Buffer.TYPED_ARRAY_SUPPORT) {
+    // Return an augmented `Uint8Array` instance, for best performance
+    that = new Uint8Array(length)
+    that.__proto__ = Buffer.prototype
+  } else {
+    // Fallback: Return an object instance of the Buffer class
+    if (that === null) {
+      that = new Buffer(length)
+    }
+    that.length = length
+  }
+
+  return that
+}
+
 /**
  * The Buffer constructor returns instances of `Uint8Array` that have their
  * prototype changed to `Buffer.prototype`. Furthermore, `Buffer` is a subclass of
@@ -78,31 +99,25 @@ function kMaxLength () {
  *
  * The `Uint8Array` prototype remains unmodified.
  */
-function Buffer (arg) {
-  if (!(this instanceof Buffer)) {
-    // Avoid going through an ArgumentsAdaptorTrampoline in the common case.
-    if (arguments.length > 1) return new Buffer(arg, arguments[1])
-    return new Buffer(arg)
-  }
 
-  if (!Buffer.TYPED_ARRAY_SUPPORT) {
-    this.length = 0
-    this.parent = undefined
+function Buffer (arg, encodingOrOffset, length) {
+  if (!Buffer.TYPED_ARRAY_SUPPORT && !(this instanceof Buffer)) {
+    return new Buffer(arg, encodingOrOffset, length)
   }
 
   // Common case.
   if (typeof arg === 'number') {
-    return fromNumber(this, arg)
+    if (typeof encodingOrOffset === 'string') {
+      throw new Error(
+        'If encoding is specified then the first argument must be a string'
+      )
+    }
+    return allocUnsafe(this, arg)
   }
-
-  // Slightly less common case.
-  if (typeof arg === 'string') {
-    return fromString(this, arg, arguments.length > 1 ? arguments[1] : 'utf8')
-  }
-
-  // Unusual.
-  return fromObject(this, arg)
+  return from(this, arg, encodingOrOffset, length)
 }
+
+Buffer.poolSize = 8192 // not used by this implementation
 
 // TODO: Legacy, not needed anymore. Remove in next major version.
 Buffer._augment = function (arr) {
@@ -110,118 +125,32 @@ Buffer._augment = function (arr) {
   return arr
 }
 
-function fromNumber (that, length) {
-  that = allocate(that, length < 0 ? 0 : checked(length) | 0)
-  if (!Buffer.TYPED_ARRAY_SUPPORT) {
-    for (var i = 0; i < length; i++) {
-      that[i] = 0
-    }
+function from (that, value, encodingOrOffset, length) {
+  if (typeof value === 'number') {
+    throw new TypeError('"value" argument must not be a number')
   }
-  return that
+
+  if (typeof ArrayBuffer !== 'undefined' && value instanceof ArrayBuffer) {
+    return fromArrayBuffer(that, value, encodingOrOffset, length)
+  }
+
+  if (typeof value === 'string') {
+    return fromString(that, value, encodingOrOffset)
+  }
+
+  return fromObject(that, value)
 }
 
-function fromString (that, string, encoding) {
-  if (typeof encoding !== 'string' || encoding === '') encoding = 'utf8'
-
-  // Assumption: byteLength() return value is always < kMaxLength.
-  var length = byteLength(string, encoding) | 0
-  that = allocate(that, length)
-
-  that.write(string, encoding)
-  return that
-}
-
-function fromObject (that, object) {
-  if (Buffer.isBuffer(object)) return fromBuffer(that, object)
-
-  if (isArray(object)) return fromArray(that, object)
-
-  if (object == null) {
-    throw new TypeError('must start with number, buffer, array or string')
-  }
-
-  if (typeof ArrayBuffer !== 'undefined') {
-    if (object.buffer instanceof ArrayBuffer) {
-      return fromTypedArray(that, object)
-    }
-    if (object instanceof ArrayBuffer) {
-      return fromArrayBuffer(that, object)
-    }
-  }
-
-  if (object.length) return fromArrayLike(that, object)
-
-  return fromJsonObject(that, object)
-}
-
-function fromBuffer (that, buffer) {
-  var length = checked(buffer.length) | 0
-  that = allocate(that, length)
-  buffer.copy(that, 0, 0, length)
-  return that
-}
-
-function fromArray (that, array) {
-  var length = checked(array.length) | 0
-  that = allocate(that, length)
-  for (var i = 0; i < length; i += 1) {
-    that[i] = array[i] & 255
-  }
-  return that
-}
-
-// Duplicate of fromArray() to keep fromArray() monomorphic.
-function fromTypedArray (that, array) {
-  var length = checked(array.length) | 0
-  that = allocate(that, length)
-  // Truncating the elements is probably not what people expect from typed
-  // arrays with BYTES_PER_ELEMENT > 1 but it's compatible with the behavior
-  // of the old Buffer constructor.
-  for (var i = 0; i < length; i += 1) {
-    that[i] = array[i] & 255
-  }
-  return that
-}
-
-function fromArrayBuffer (that, array) {
-  array.byteLength // this throws if `array` is not a valid ArrayBuffer
-
-  if (Buffer.TYPED_ARRAY_SUPPORT) {
-    // Return an augmented `Uint8Array` instance, for best performance
-    that = new Uint8Array(array)
-    that.__proto__ = Buffer.prototype
-  } else {
-    // Fallback: Return an object instance of the Buffer class
-    that = fromTypedArray(that, new Uint8Array(array))
-  }
-  return that
-}
-
-function fromArrayLike (that, array) {
-  var length = checked(array.length) | 0
-  that = allocate(that, length)
-  for (var i = 0; i < length; i += 1) {
-    that[i] = array[i] & 255
-  }
-  return that
-}
-
-// Deserialize { type: 'Buffer', data: [1,2,3,...] } into a Buffer object.
-// Returns a zero-length buffer for inputs that don't conform to the spec.
-function fromJsonObject (that, object) {
-  var array
-  var length = 0
-
-  if (object.type === 'Buffer' && isArray(object.data)) {
-    array = object.data
-    length = checked(array.length) | 0
-  }
-  that = allocate(that, length)
-
-  for (var i = 0; i < length; i += 1) {
-    that[i] = array[i] & 255
-  }
-  return that
+/**
+ * Functionally equivalent to Buffer(arg, encoding) but throws a TypeError
+ * if value is a number.
+ * Buffer.from(str[, encoding])
+ * Buffer.from(array)
+ * Buffer.from(buffer)
+ * Buffer.from(arrayBuffer[, byteOffset[, length]])
+ **/
+Buffer.from = function (value, encodingOrOffset, length) {
+  return from(null, value, encodingOrOffset, length)
 }
 
 if (Buffer.TYPED_ARRAY_SUPPORT) {
@@ -235,30 +164,159 @@ if (Buffer.TYPED_ARRAY_SUPPORT) {
       configurable: true
     })
   }
-} else {
-  // pre-set for values that may exist in the future
-  Buffer.prototype.length = undefined
-  Buffer.prototype.parent = undefined
 }
 
-function allocate (that, length) {
-  if (Buffer.TYPED_ARRAY_SUPPORT) {
-    // Return an augmented `Uint8Array` instance, for best performance
-    that = new Uint8Array(length)
-    that.__proto__ = Buffer.prototype
-  } else {
-    // Fallback: Return an object instance of the Buffer class
-    that.length = length
+function assertSize (size) {
+  if (typeof size !== 'number') {
+    throw new TypeError('"size" argument must be a number')
+  } else if (size < 0) {
+    throw new RangeError('"size" argument must not be negative')
+  }
+}
+
+function alloc (that, size, fill, encoding) {
+  assertSize(size)
+  if (size <= 0) {
+    return createBuffer(that, size)
+  }
+  if (fill !== undefined) {
+    // Only pay attention to encoding if it's a string. This
+    // prevents accidentally sending in a number that would
+    // be interpretted as a start offset.
+    return typeof encoding === 'string'
+      ? createBuffer(that, size).fill(fill, encoding)
+      : createBuffer(that, size).fill(fill)
+  }
+  return createBuffer(that, size)
+}
+
+/**
+ * Creates a new filled Buffer instance.
+ * alloc(size[, fill[, encoding]])
+ **/
+Buffer.alloc = function (size, fill, encoding) {
+  return alloc(null, size, fill, encoding)
+}
+
+function allocUnsafe (that, size) {
+  assertSize(size)
+  that = createBuffer(that, size < 0 ? 0 : checked(size) | 0)
+  if (!Buffer.TYPED_ARRAY_SUPPORT) {
+    for (var i = 0; i < size; ++i) {
+      that[i] = 0
+    }
+  }
+  return that
+}
+
+/**
+ * Equivalent to Buffer(num), by default creates a non-zero-filled Buffer instance.
+ * */
+Buffer.allocUnsafe = function (size) {
+  return allocUnsafe(null, size)
+}
+/**
+ * Equivalent to SlowBuffer(num), by default creates a non-zero-filled Buffer instance.
+ */
+Buffer.allocUnsafeSlow = function (size) {
+  return allocUnsafe(null, size)
+}
+
+function fromString (that, string, encoding) {
+  if (typeof encoding !== 'string' || encoding === '') {
+    encoding = 'utf8'
   }
 
-  var fromPool = length !== 0 && length <= Buffer.poolSize >>> 1
-  if (fromPool) that.parent = rootParent
+  if (!Buffer.isEncoding(encoding)) {
+    throw new TypeError('"encoding" must be a valid string encoding')
+  }
+
+  var length = byteLength(string, encoding) | 0
+  that = createBuffer(that, length)
+
+  var actual = that.write(string, encoding)
+
+  if (actual !== length) {
+    // Writing a hex string, for example, that contains invalid characters will
+    // cause everything after the first invalid character to be ignored. (e.g.
+    // 'abxxcd' will be treated as 'ab')
+    that = that.slice(0, actual)
+  }
 
   return that
 }
 
+function fromArrayLike (that, array) {
+  var length = array.length < 0 ? 0 : checked(array.length) | 0
+  that = createBuffer(that, length)
+  for (var i = 0; i < length; i += 1) {
+    that[i] = array[i] & 255
+  }
+  return that
+}
+
+function fromArrayBuffer (that, array, byteOffset, length) {
+  array.byteLength // this throws if `array` is not a valid ArrayBuffer
+
+  if (byteOffset < 0 || array.byteLength < byteOffset) {
+    throw new RangeError('\'offset\' is out of bounds')
+  }
+
+  if (array.byteLength < byteOffset + (length || 0)) {
+    throw new RangeError('\'length\' is out of bounds')
+  }
+
+  if (byteOffset === undefined && length === undefined) {
+    array = new Uint8Array(array)
+  } else if (length === undefined) {
+    array = new Uint8Array(array, byteOffset)
+  } else {
+    array = new Uint8Array(array, byteOffset, length)
+  }
+
+  if (Buffer.TYPED_ARRAY_SUPPORT) {
+    // Return an augmented `Uint8Array` instance, for best performance
+    that = array
+    that.__proto__ = Buffer.prototype
+  } else {
+    // Fallback: Return an object instance of the Buffer class
+    that = fromArrayLike(that, array)
+  }
+  return that
+}
+
+function fromObject (that, obj) {
+  if (Buffer.isBuffer(obj)) {
+    var len = checked(obj.length) | 0
+    that = createBuffer(that, len)
+
+    if (that.length === 0) {
+      return that
+    }
+
+    obj.copy(that, 0, 0, len)
+    return that
+  }
+
+  if (obj) {
+    if ((typeof ArrayBuffer !== 'undefined' &&
+        obj.buffer instanceof ArrayBuffer) || 'length' in obj) {
+      if (typeof obj.length !== 'number' || isnan(obj.length)) {
+        return createBuffer(that, 0)
+      }
+      return fromArrayLike(that, obj)
+    }
+
+    if (obj.type === 'Buffer' && isArray(obj.data)) {
+      return fromArrayLike(that, obj.data)
+    }
+  }
+
+  throw new TypeError('First argument must be a string, Buffer, ArrayBuffer, Array, or array-like object.')
+}
+
 function checked (length) {
-  // Note: cannot use `length < kMaxLength` here because that fails when
+  // Note: cannot use `length < kMaxLength()` here because that fails when
   // length is NaN (which is otherwise coerced to zero.)
   if (length >= kMaxLength()) {
     throw new RangeError('Attempt to allocate Buffer larger than maximum ' +
@@ -267,12 +325,11 @@ function checked (length) {
   return length | 0
 }
 
-function SlowBuffer (subject, encoding) {
-  if (!(this instanceof SlowBuffer)) return new SlowBuffer(subject, encoding)
-
-  var buf = new Buffer(subject, encoding)
-  delete buf.parent
-  return buf
+function SlowBuffer (length) {
+  if (+length != length) { // eslint-disable-line eqeqeq
+    length = 0
+  }
+  return Buffer.alloc(+length)
 }
 
 Buffer.isBuffer = function isBuffer (b) {
@@ -289,17 +346,12 @@ Buffer.compare = function compare (a, b) {
   var x = a.length
   var y = b.length
 
-  var i = 0
-  var len = Math.min(x, y)
-  while (i < len) {
-    if (a[i] !== b[i]) break
-
-    ++i
-  }
-
-  if (i !== len) {
-    x = a[i]
-    y = b[i]
+  for (var i = 0, len = Math.min(x, y); i < len; ++i) {
+    if (a[i] !== b[i]) {
+      x = a[i]
+      y = b[i]
+      break
+    }
   }
 
   if (x < y) return -1
@@ -313,9 +365,9 @@ Buffer.isEncoding = function isEncoding (encoding) {
     case 'utf8':
     case 'utf-8':
     case 'ascii':
+    case 'latin1':
     case 'binary':
     case 'base64':
-    case 'raw':
     case 'ucs2':
     case 'ucs-2':
     case 'utf16le':
@@ -327,32 +379,46 @@ Buffer.isEncoding = function isEncoding (encoding) {
 }
 
 Buffer.concat = function concat (list, length) {
-  if (!isArray(list)) throw new TypeError('list argument must be an Array of Buffers.')
+  if (!isArray(list)) {
+    throw new TypeError('"list" argument must be an Array of Buffers')
+  }
 
   if (list.length === 0) {
-    return new Buffer(0)
+    return Buffer.alloc(0)
   }
 
   var i
   if (length === undefined) {
     length = 0
-    for (i = 0; i < list.length; i++) {
+    for (i = 0; i < list.length; ++i) {
       length += list[i].length
     }
   }
 
-  var buf = new Buffer(length)
+  var buffer = Buffer.allocUnsafe(length)
   var pos = 0
-  for (i = 0; i < list.length; i++) {
-    var item = list[i]
-    item.copy(buf, pos)
-    pos += item.length
+  for (i = 0; i < list.length; ++i) {
+    var buf = list[i]
+    if (!Buffer.isBuffer(buf)) {
+      throw new TypeError('"list" argument must be an Array of Buffers')
+    }
+    buf.copy(buffer, pos)
+    pos += buf.length
   }
-  return buf
+  return buffer
 }
 
 function byteLength (string, encoding) {
-  if (typeof string !== 'string') string = '' + string
+  if (Buffer.isBuffer(string)) {
+    return string.length
+  }
+  if (typeof ArrayBuffer !== 'undefined' && typeof ArrayBuffer.isView === 'function' &&
+      (ArrayBuffer.isView(string) || string instanceof ArrayBuffer)) {
+    return string.byteLength
+  }
+  if (typeof string !== 'string') {
+    string = '' + string
+  }
 
   var len = string.length
   if (len === 0) return 0
@@ -362,13 +428,12 @@ function byteLength (string, encoding) {
   for (;;) {
     switch (encoding) {
       case 'ascii':
+      case 'latin1':
       case 'binary':
-      // Deprecated
-      case 'raw':
-      case 'raws':
         return len
       case 'utf8':
       case 'utf-8':
+      case undefined:
         return utf8ToBytes(string).length
       case 'ucs2':
       case 'ucs-2':
@@ -391,13 +456,39 @@ Buffer.byteLength = byteLength
 function slowToString (encoding, start, end) {
   var loweredCase = false
 
-  start = start | 0
-  end = end === undefined || end === Infinity ? this.length : end | 0
+  // No need to verify that "this.length <= MAX_UINT32" since it's a read-only
+  // property of a typed array.
+
+  // This behaves neither like String nor Uint8Array in that we set start/end
+  // to their upper/lower bounds if the value passed is out of range.
+  // undefined is handled specially as per ECMA-262 6th Edition,
+  // Section 13.3.3.7 Runtime Semantics: KeyedBindingInitialization.
+  if (start === undefined || start < 0) {
+    start = 0
+  }
+  // Return early if start > this.length. Done here to prevent potential uint32
+  // coercion fail below.
+  if (start > this.length) {
+    return ''
+  }
+
+  if (end === undefined || end > this.length) {
+    end = this.length
+  }
+
+  if (end <= 0) {
+    return ''
+  }
+
+  // Force coersion to uint32. This will also coerce falsey/NaN values to 0.
+  end >>>= 0
+  start >>>= 0
+
+  if (end <= start) {
+    return ''
+  }
 
   if (!encoding) encoding = 'utf8'
-  if (start < 0) start = 0
-  if (end > this.length) end = this.length
-  if (end <= start) return ''
 
   while (true) {
     switch (encoding) {
@@ -411,8 +502,9 @@ function slowToString (encoding, start, end) {
       case 'ascii':
         return asciiSlice(this, start, end)
 
+      case 'latin1':
       case 'binary':
-        return binarySlice(this, start, end)
+        return latin1Slice(this, start, end)
 
       case 'base64':
         return base64Slice(this, start, end)
@@ -434,6 +526,49 @@ function slowToString (encoding, start, end) {
 // The property is used by `Buffer.isBuffer` and `is-buffer` (in Safari 5-7) to detect
 // Buffer instances.
 Buffer.prototype._isBuffer = true
+
+function swap (b, n, m) {
+  var i = b[n]
+  b[n] = b[m]
+  b[m] = i
+}
+
+Buffer.prototype.swap16 = function swap16 () {
+  var len = this.length
+  if (len % 2 !== 0) {
+    throw new RangeError('Buffer size must be a multiple of 16-bits')
+  }
+  for (var i = 0; i < len; i += 2) {
+    swap(this, i, i + 1)
+  }
+  return this
+}
+
+Buffer.prototype.swap32 = function swap32 () {
+  var len = this.length
+  if (len % 4 !== 0) {
+    throw new RangeError('Buffer size must be a multiple of 32-bits')
+  }
+  for (var i = 0; i < len; i += 4) {
+    swap(this, i, i + 3)
+    swap(this, i + 1, i + 2)
+  }
+  return this
+}
+
+Buffer.prototype.swap64 = function swap64 () {
+  var len = this.length
+  if (len % 8 !== 0) {
+    throw new RangeError('Buffer size must be a multiple of 64-bits')
+  }
+  for (var i = 0; i < len; i += 8) {
+    swap(this, i, i + 7)
+    swap(this, i + 1, i + 6)
+    swap(this, i + 2, i + 5)
+    swap(this, i + 3, i + 4)
+  }
+  return this
+}
 
 Buffer.prototype.toString = function toString () {
   var length = this.length | 0
@@ -458,51 +593,197 @@ Buffer.prototype.inspect = function inspect () {
   return '<Buffer ' + str + '>'
 }
 
-Buffer.prototype.compare = function compare (b) {
-  if (!Buffer.isBuffer(b)) throw new TypeError('Argument must be a Buffer')
-  if (this === b) return 0
-  return Buffer.compare(this, b)
+Buffer.prototype.compare = function compare (target, start, end, thisStart, thisEnd) {
+  if (!Buffer.isBuffer(target)) {
+    throw new TypeError('Argument must be a Buffer')
+  }
+
+  if (start === undefined) {
+    start = 0
+  }
+  if (end === undefined) {
+    end = target ? target.length : 0
+  }
+  if (thisStart === undefined) {
+    thisStart = 0
+  }
+  if (thisEnd === undefined) {
+    thisEnd = this.length
+  }
+
+  if (start < 0 || end > target.length || thisStart < 0 || thisEnd > this.length) {
+    throw new RangeError('out of range index')
+  }
+
+  if (thisStart >= thisEnd && start >= end) {
+    return 0
+  }
+  if (thisStart >= thisEnd) {
+    return -1
+  }
+  if (start >= end) {
+    return 1
+  }
+
+  start >>>= 0
+  end >>>= 0
+  thisStart >>>= 0
+  thisEnd >>>= 0
+
+  if (this === target) return 0
+
+  var x = thisEnd - thisStart
+  var y = end - start
+  var len = Math.min(x, y)
+
+  var thisCopy = this.slice(thisStart, thisEnd)
+  var targetCopy = target.slice(start, end)
+
+  for (var i = 0; i < len; ++i) {
+    if (thisCopy[i] !== targetCopy[i]) {
+      x = thisCopy[i]
+      y = targetCopy[i]
+      break
+    }
+  }
+
+  if (x < y) return -1
+  if (y < x) return 1
+  return 0
 }
 
-Buffer.prototype.indexOf = function indexOf (val, byteOffset) {
-  if (byteOffset > 0x7fffffff) byteOffset = 0x7fffffff
-  else if (byteOffset < -0x80000000) byteOffset = -0x80000000
-  byteOffset >>= 0
+// Finds either the first index of `val` in `buffer` at offset >= `byteOffset`,
+// OR the last index of `val` in `buffer` at offset <= `byteOffset`.
+//
+// Arguments:
+// - buffer - a Buffer to search
+// - val - a string, Buffer, or number
+// - byteOffset - an index into `buffer`; will be clamped to an int32
+// - encoding - an optional encoding, relevant is val is a string
+// - dir - true for indexOf, false for lastIndexOf
+function bidirectionalIndexOf (buffer, val, byteOffset, encoding, dir) {
+  // Empty buffer means no match
+  if (buffer.length === 0) return -1
 
-  if (this.length === 0) return -1
-  if (byteOffset >= this.length) return -1
+  // Normalize byteOffset
+  if (typeof byteOffset === 'string') {
+    encoding = byteOffset
+    byteOffset = 0
+  } else if (byteOffset > 0x7fffffff) {
+    byteOffset = 0x7fffffff
+  } else if (byteOffset < -0x80000000) {
+    byteOffset = -0x80000000
+  }
+  byteOffset = +byteOffset  // Coerce to Number.
+  if (isNaN(byteOffset)) {
+    // byteOffset: it it's undefined, null, NaN, "foo", etc, search whole buffer
+    byteOffset = dir ? 0 : (buffer.length - 1)
+  }
 
-  // Negative offsets start from the end of the buffer
-  if (byteOffset < 0) byteOffset = Math.max(this.length + byteOffset, 0)
+  // Normalize byteOffset: negative offsets start from the end of the buffer
+  if (byteOffset < 0) byteOffset = buffer.length + byteOffset
+  if (byteOffset >= buffer.length) {
+    if (dir) return -1
+    else byteOffset = buffer.length - 1
+  } else if (byteOffset < 0) {
+    if (dir) byteOffset = 0
+    else return -1
+  }
 
+  // Normalize val
   if (typeof val === 'string') {
-    if (val.length === 0) return -1 // special case: looking for empty string always fails
-    return String.prototype.indexOf.call(this, val, byteOffset)
-  }
-  if (Buffer.isBuffer(val)) {
-    return arrayIndexOf(this, val, byteOffset)
-  }
-  if (typeof val === 'number') {
-    if (Buffer.TYPED_ARRAY_SUPPORT && Uint8Array.prototype.indexOf === 'function') {
-      return Uint8Array.prototype.indexOf.call(this, val, byteOffset)
-    }
-    return arrayIndexOf(this, [ val ], byteOffset)
+    val = Buffer.from(val, encoding)
   }
 
-  function arrayIndexOf (arr, val, byteOffset) {
-    var foundIndex = -1
-    for (var i = 0; byteOffset + i < arr.length; i++) {
-      if (arr[byteOffset + i] === val[foundIndex === -1 ? 0 : i - foundIndex]) {
-        if (foundIndex === -1) foundIndex = i
-        if (i - foundIndex + 1 === val.length) return byteOffset + foundIndex
+  // Finally, search either indexOf (if dir is true) or lastIndexOf
+  if (Buffer.isBuffer(val)) {
+    // Special case: looking for empty string/buffer always fails
+    if (val.length === 0) {
+      return -1
+    }
+    return arrayIndexOf(buffer, val, byteOffset, encoding, dir)
+  } else if (typeof val === 'number') {
+    val = val & 0xFF // Search for a byte value [0-255]
+    if (Buffer.TYPED_ARRAY_SUPPORT &&
+        typeof Uint8Array.prototype.indexOf === 'function') {
+      if (dir) {
+        return Uint8Array.prototype.indexOf.call(buffer, val, byteOffset)
       } else {
-        foundIndex = -1
+        return Uint8Array.prototype.lastIndexOf.call(buffer, val, byteOffset)
       }
     }
-    return -1
+    return arrayIndexOf(buffer, [ val ], byteOffset, encoding, dir)
   }
 
   throw new TypeError('val must be string, number or Buffer')
+}
+
+function arrayIndexOf (arr, val, byteOffset, encoding, dir) {
+  var indexSize = 1
+  var arrLength = arr.length
+  var valLength = val.length
+
+  if (encoding !== undefined) {
+    encoding = String(encoding).toLowerCase()
+    if (encoding === 'ucs2' || encoding === 'ucs-2' ||
+        encoding === 'utf16le' || encoding === 'utf-16le') {
+      if (arr.length < 2 || val.length < 2) {
+        return -1
+      }
+      indexSize = 2
+      arrLength /= 2
+      valLength /= 2
+      byteOffset /= 2
+    }
+  }
+
+  function read (buf, i) {
+    if (indexSize === 1) {
+      return buf[i]
+    } else {
+      return buf.readUInt16BE(i * indexSize)
+    }
+  }
+
+  var i
+  if (dir) {
+    var foundIndex = -1
+    for (i = byteOffset; i < arrLength; i++) {
+      if (read(arr, i) === read(val, foundIndex === -1 ? 0 : i - foundIndex)) {
+        if (foundIndex === -1) foundIndex = i
+        if (i - foundIndex + 1 === valLength) return foundIndex * indexSize
+      } else {
+        if (foundIndex !== -1) i -= i - foundIndex
+        foundIndex = -1
+      }
+    }
+  } else {
+    if (byteOffset + valLength > arrLength) byteOffset = arrLength - valLength
+    for (i = byteOffset; i >= 0; i--) {
+      var found = true
+      for (var j = 0; j < valLength; j++) {
+        if (read(arr, i + j) !== read(val, j)) {
+          found = false
+          break
+        }
+      }
+      if (found) return i
+    }
+  }
+
+  return -1
+}
+
+Buffer.prototype.includes = function includes (val, byteOffset, encoding) {
+  return this.indexOf(val, byteOffset, encoding) !== -1
+}
+
+Buffer.prototype.indexOf = function indexOf (val, byteOffset, encoding) {
+  return bidirectionalIndexOf(this, val, byteOffset, encoding, true)
+}
+
+Buffer.prototype.lastIndexOf = function lastIndexOf (val, byteOffset, encoding) {
+  return bidirectionalIndexOf(this, val, byteOffset, encoding, false)
 }
 
 function hexWrite (buf, string, offset, length) {
@@ -519,14 +800,14 @@ function hexWrite (buf, string, offset, length) {
 
   // must be an even number of digits
   var strLen = string.length
-  if (strLen % 2 !== 0) throw new Error('Invalid hex string')
+  if (strLen % 2 !== 0) throw new TypeError('Invalid hex string')
 
   if (length > strLen / 2) {
     length = strLen / 2
   }
-  for (var i = 0; i < length; i++) {
+  for (var i = 0; i < length; ++i) {
     var parsed = parseInt(string.substr(i * 2, 2), 16)
-    if (isNaN(parsed)) throw new Error('Invalid hex string')
+    if (isNaN(parsed)) return i
     buf[offset + i] = parsed
   }
   return i
@@ -540,7 +821,7 @@ function asciiWrite (buf, string, offset, length) {
   return blitBuffer(asciiToBytes(string), buf, offset, length)
 }
 
-function binaryWrite (buf, string, offset, length) {
+function latin1Write (buf, string, offset, length) {
   return asciiWrite(buf, string, offset, length)
 }
 
@@ -575,17 +856,16 @@ Buffer.prototype.write = function write (string, offset, length, encoding) {
     }
   // legacy write(string, encoding, offset, length) - remove in v0.13
   } else {
-    var swap = encoding
-    encoding = offset
-    offset = length | 0
-    length = swap
+    throw new Error(
+      'Buffer.write(string, encoding, offset[, length]) is no longer supported'
+    )
   }
 
   var remaining = this.length - offset
   if (length === undefined || length > remaining) length = remaining
 
   if ((string.length > 0 && (length < 0 || offset < 0)) || offset > this.length) {
-    throw new RangeError('attempt to write outside buffer bounds')
+    throw new RangeError('Attempt to write outside buffer bounds')
   }
 
   if (!encoding) encoding = 'utf8'
@@ -603,8 +883,9 @@ Buffer.prototype.write = function write (string, offset, length, encoding) {
       case 'ascii':
         return asciiWrite(this, string, offset, length)
 
+      case 'latin1':
       case 'binary':
-        return binaryWrite(this, string, offset, length)
+        return latin1Write(this, string, offset, length)
 
       case 'base64':
         // Warning: maxLength not taken into account in base64Write
@@ -739,17 +1020,17 @@ function asciiSlice (buf, start, end) {
   var ret = ''
   end = Math.min(buf.length, end)
 
-  for (var i = start; i < end; i++) {
+  for (var i = start; i < end; ++i) {
     ret += String.fromCharCode(buf[i] & 0x7F)
   }
   return ret
 }
 
-function binarySlice (buf, start, end) {
+function latin1Slice (buf, start, end) {
   var ret = ''
   end = Math.min(buf.length, end)
 
-  for (var i = start; i < end; i++) {
+  for (var i = start; i < end; ++i) {
     ret += String.fromCharCode(buf[i])
   }
   return ret
@@ -762,7 +1043,7 @@ function hexSlice (buf, start, end) {
   if (!end || end < 0 || end > len) end = len
 
   var out = ''
-  for (var i = start; i < end; i++) {
+  for (var i = start; i < end; ++i) {
     out += toHex(buf[i])
   }
   return out
@@ -805,12 +1086,10 @@ Buffer.prototype.slice = function slice (start, end) {
   } else {
     var sliceLen = end - start
     newBuf = new Buffer(sliceLen, undefined)
-    for (var i = 0; i < sliceLen; i++) {
+    for (var i = 0; i < sliceLen; ++i) {
       newBuf[i] = this[i + start]
     }
   }
-
-  if (newBuf.length) newBuf.parent = this.parent || this
 
   return newBuf
 }
@@ -980,16 +1259,19 @@ Buffer.prototype.readDoubleBE = function readDoubleBE (offset, noAssert) {
 }
 
 function checkInt (buf, value, offset, ext, max, min) {
-  if (!Buffer.isBuffer(buf)) throw new TypeError('buffer must be a Buffer instance')
-  if (value > max || value < min) throw new RangeError('value is out of bounds')
-  if (offset + ext > buf.length) throw new RangeError('index out of range')
+  if (!Buffer.isBuffer(buf)) throw new TypeError('"buffer" argument must be a Buffer instance')
+  if (value > max || value < min) throw new RangeError('"value" argument is out of bounds')
+  if (offset + ext > buf.length) throw new RangeError('Index out of range')
 }
 
 Buffer.prototype.writeUIntLE = function writeUIntLE (value, offset, byteLength, noAssert) {
   value = +value
   offset = offset | 0
   byteLength = byteLength | 0
-  if (!noAssert) checkInt(this, value, offset, byteLength, Math.pow(2, 8 * byteLength), 0)
+  if (!noAssert) {
+    var maxBytes = Math.pow(2, 8 * byteLength) - 1
+    checkInt(this, value, offset, byteLength, maxBytes, 0)
+  }
 
   var mul = 1
   var i = 0
@@ -1005,7 +1287,10 @@ Buffer.prototype.writeUIntBE = function writeUIntBE (value, offset, byteLength, 
   value = +value
   offset = offset | 0
   byteLength = byteLength | 0
-  if (!noAssert) checkInt(this, value, offset, byteLength, Math.pow(2, 8 * byteLength), 0)
+  if (!noAssert) {
+    var maxBytes = Math.pow(2, 8 * byteLength) - 1
+    checkInt(this, value, offset, byteLength, maxBytes, 0)
+  }
 
   var i = byteLength - 1
   var mul = 1
@@ -1028,7 +1313,7 @@ Buffer.prototype.writeUInt8 = function writeUInt8 (value, offset, noAssert) {
 
 function objectWriteUInt16 (buf, value, offset, littleEndian) {
   if (value < 0) value = 0xffff + value + 1
-  for (var i = 0, j = Math.min(buf.length - offset, 2); i < j; i++) {
+  for (var i = 0, j = Math.min(buf.length - offset, 2); i < j; ++i) {
     buf[offset + i] = (value & (0xff << (8 * (littleEndian ? i : 1 - i)))) >>>
       (littleEndian ? i : 1 - i) * 8
   }
@@ -1062,7 +1347,7 @@ Buffer.prototype.writeUInt16BE = function writeUInt16BE (value, offset, noAssert
 
 function objectWriteUInt32 (buf, value, offset, littleEndian) {
   if (value < 0) value = 0xffffffff + value + 1
-  for (var i = 0, j = Math.min(buf.length - offset, 4); i < j; i++) {
+  for (var i = 0, j = Math.min(buf.length - offset, 4); i < j; ++i) {
     buf[offset + i] = (value >>> (littleEndian ? i : 3 - i) * 8) & 0xff
   }
 }
@@ -1108,9 +1393,12 @@ Buffer.prototype.writeIntLE = function writeIntLE (value, offset, byteLength, no
 
   var i = 0
   var mul = 1
-  var sub = value < 0 ? 1 : 0
+  var sub = 0
   this[offset] = value & 0xFF
   while (++i < byteLength && (mul *= 0x100)) {
+    if (value < 0 && sub === 0 && this[offset + i - 1] !== 0) {
+      sub = 1
+    }
     this[offset + i] = ((value / mul) >> 0) - sub & 0xFF
   }
 
@@ -1128,9 +1416,12 @@ Buffer.prototype.writeIntBE = function writeIntBE (value, offset, byteLength, no
 
   var i = byteLength - 1
   var mul = 1
-  var sub = value < 0 ? 1 : 0
+  var sub = 0
   this[offset + i] = value & 0xFF
   while (--i >= 0 && (mul *= 0x100)) {
+    if (value < 0 && sub === 0 && this[offset + i + 1] !== 0) {
+      sub = 1
+    }
     this[offset + i] = ((value / mul) >> 0) - sub & 0xFF
   }
 
@@ -1205,8 +1496,8 @@ Buffer.prototype.writeInt32BE = function writeInt32BE (value, offset, noAssert) 
 }
 
 function checkIEEE754 (buf, value, offset, ext, max, min) {
-  if (offset + ext > buf.length) throw new RangeError('index out of range')
-  if (offset < 0) throw new RangeError('index out of range')
+  if (offset + ext > buf.length) throw new RangeError('Index out of range')
+  if (offset < 0) throw new RangeError('Index out of range')
 }
 
 function writeFloat (buf, value, offset, littleEndian, noAssert) {
@@ -1271,12 +1562,12 @@ Buffer.prototype.copy = function copy (target, targetStart, start, end) {
 
   if (this === target && start < targetStart && targetStart < end) {
     // descending copy from end
-    for (i = len - 1; i >= 0; i--) {
+    for (i = len - 1; i >= 0; --i) {
       target[i + targetStart] = this[i + start]
     }
   } else if (len < 1000 || !Buffer.TYPED_ARRAY_SUPPORT) {
     // ascending copy from start
-    for (i = 0; i < len; i++) {
+    for (i = 0; i < len; ++i) {
       target[i + targetStart] = this[i + start]
     }
   } else {
@@ -1290,31 +1581,63 @@ Buffer.prototype.copy = function copy (target, targetStart, start, end) {
   return len
 }
 
-// fill(value, start=0, end=buffer.length)
-Buffer.prototype.fill = function fill (value, start, end) {
-  if (!value) value = 0
-  if (!start) start = 0
-  if (!end) end = this.length
+// Usage:
+//    buffer.fill(number[, offset[, end]])
+//    buffer.fill(buffer[, offset[, end]])
+//    buffer.fill(string[, offset[, end]][, encoding])
+Buffer.prototype.fill = function fill (val, start, end, encoding) {
+  // Handle string cases:
+  if (typeof val === 'string') {
+    if (typeof start === 'string') {
+      encoding = start
+      start = 0
+      end = this.length
+    } else if (typeof end === 'string') {
+      encoding = end
+      end = this.length
+    }
+    if (val.length === 1) {
+      var code = val.charCodeAt(0)
+      if (code < 256) {
+        val = code
+      }
+    }
+    if (encoding !== undefined && typeof encoding !== 'string') {
+      throw new TypeError('encoding must be a string')
+    }
+    if (typeof encoding === 'string' && !Buffer.isEncoding(encoding)) {
+      throw new TypeError('Unknown encoding: ' + encoding)
+    }
+  } else if (typeof val === 'number') {
+    val = val & 255
+  }
 
-  if (end < start) throw new RangeError('end < start')
+  // Invalid ranges are not set to a default, so can range check early.
+  if (start < 0 || this.length < start || this.length < end) {
+    throw new RangeError('Out of range index')
+  }
 
-  // Fill 0 bytes; we're done
-  if (end === start) return
-  if (this.length === 0) return
+  if (end <= start) {
+    return this
+  }
 
-  if (start < 0 || start >= this.length) throw new RangeError('start out of bounds')
-  if (end < 0 || end > this.length) throw new RangeError('end out of bounds')
+  start = start >>> 0
+  end = end === undefined ? this.length : end >>> 0
+
+  if (!val) val = 0
 
   var i
-  if (typeof value === 'number') {
-    for (i = start; i < end; i++) {
-      this[i] = value
+  if (typeof val === 'number') {
+    for (i = start; i < end; ++i) {
+      this[i] = val
     }
   } else {
-    var bytes = utf8ToBytes(value.toString())
+    var bytes = Buffer.isBuffer(val)
+      ? val
+      : utf8ToBytes(new Buffer(val, encoding).toString())
     var len = bytes.length
-    for (i = start; i < end; i++) {
-      this[i] = bytes[i % len]
+    for (i = 0; i < end - start; ++i) {
+      this[i + start] = bytes[i % len]
     }
   }
 
@@ -1355,7 +1678,7 @@ function utf8ToBytes (string, units) {
   var leadSurrogate = null
   var bytes = []
 
-  for (var i = 0; i < length; i++) {
+  for (var i = 0; i < length; ++i) {
     codePoint = string.charCodeAt(i)
 
     // is surrogate component
@@ -1430,7 +1753,7 @@ function utf8ToBytes (string, units) {
 
 function asciiToBytes (str) {
   var byteArray = []
-  for (var i = 0; i < str.length; i++) {
+  for (var i = 0; i < str.length; ++i) {
     // Node's code seems to be doing this and not & 0x7F..
     byteArray.push(str.charCodeAt(i) & 0xFF)
   }
@@ -1440,7 +1763,7 @@ function asciiToBytes (str) {
 function utf16leToBytes (str, units) {
   var c, hi, lo
   var byteArray = []
-  for (var i = 0; i < str.length; i++) {
+  for (var i = 0; i < str.length; ++i) {
     if ((units -= 2) < 0) break
 
     c = str.charCodeAt(i)
@@ -1458,17 +1781,22 @@ function base64ToBytes (str) {
 }
 
 function blitBuffer (src, dst, offset, length) {
-  for (var i = 0; i < length; i++) {
+  for (var i = 0; i < length; ++i) {
     if ((i + offset >= dst.length) || (i >= src.length)) break
     dst[i + offset] = src[i]
   }
   return i
 }
 
+function isnan (val) {
+  return val !== val // eslint-disable-line no-self-compare
+}
+
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
 },{"base64-js":3,"ieee754":4,"isarray":5}],3:[function(require,module,exports){
 'use strict'
 
+exports.byteLength = byteLength
 exports.toByteArray = toByteArray
 exports.fromByteArray = fromByteArray
 
@@ -1476,28 +1804,17 @@ var lookup = []
 var revLookup = []
 var Arr = typeof Uint8Array !== 'undefined' ? Uint8Array : Array
 
-function init () {
-  var i
-  var code = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-  var len = code.length
-
-  for (i = 0; i < len; i++) {
-    lookup[i] = code[i]
-  }
-
-  for (i = 0; i < len; ++i) {
-    revLookup[code.charCodeAt(i)] = i
-  }
-  revLookup['-'.charCodeAt(0)] = 62
-  revLookup['_'.charCodeAt(0)] = 63
+var code = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+for (var i = 0, len = code.length; i < len; ++i) {
+  lookup[i] = code[i]
+  revLookup[code.charCodeAt(i)] = i
 }
 
-init()
+revLookup['-'.charCodeAt(0)] = 62
+revLookup['_'.charCodeAt(0)] = 63
 
-function toByteArray (b64) {
-  var i, j, l, tmp, placeHolders, arr
+function placeHoldersCount (b64) {
   var len = b64.length
-
   if (len % 4 > 0) {
     throw new Error('Invalid string. Length must be a multiple of 4')
   }
@@ -1507,9 +1824,19 @@ function toByteArray (b64) {
   // represent one byte
   // if there is only one, then the three characters before it represent 2 bytes
   // this is just a cheap hack to not do indexOf twice
-  placeHolders = b64[len - 2] === '=' ? 2 : b64[len - 1] === '=' ? 1 : 0
+  return b64[len - 2] === '=' ? 2 : b64[len - 1] === '=' ? 1 : 0
+}
 
+function byteLength (b64) {
   // base64 is 4/3 + up to two characters of the original data
+  return b64.length * 3 / 4 - placeHoldersCount(b64)
+}
+
+function toByteArray (b64) {
+  var i, j, l, tmp, placeHolders, arr
+  var len = b64.length
+  placeHolders = placeHoldersCount(b64)
+
   arr = new Arr(len * 3 / 4 - placeHolders)
 
   // if there are placeholders, only get up to the last complete 4 chars
@@ -1519,8 +1846,8 @@ function toByteArray (b64) {
 
   for (i = 0, j = 0; i < l; i += 4, j += 3) {
     tmp = (revLookup[b64.charCodeAt(i)] << 18) | (revLookup[b64.charCodeAt(i + 1)] << 12) | (revLookup[b64.charCodeAt(i + 2)] << 6) | revLookup[b64.charCodeAt(i + 3)]
-    arr[L++] = (tmp & 0xFF0000) >> 16
-    arr[L++] = (tmp & 0xFF00) >> 8
+    arr[L++] = (tmp >> 16) & 0xFF
+    arr[L++] = (tmp >> 8) & 0xFF
     arr[L++] = tmp & 0xFF
   }
 
@@ -1676,6 +2003,1391 @@ module.exports = Array.isArray || function (arr) {
 };
 
 },{}],6:[function(require,module,exports){
+(function (Buffer){
+// This module performs validation of the input and output requests
+// and public functions for encoding and decoding as well as data conversion.
+//
+"use strict;"
+var _this = this;
+var trans = require('./transformers.js');
+
+/* types */
+var UTF8     = "UTF8";
+var UTF16    = "UTF16";
+var UTF16BE  = "UTF16BE";
+var UTF16LE  = "UTF16LE";
+var UTF32    = "UTF32";
+var UTF32BE  = "UTF32BE";
+var UTF32LE  = "UTF32LE";
+var UINT7    = "UINT7";
+var ASCII    = "ASCII";
+var BINARY   = "BINARY";
+var UINT8    = "UINT8";
+var UINT16   = "UINT16";
+var UINT16LE = "UINT16LE";
+var UINT16BE = "UINT16BE";
+var UINT32   = "UINT32";
+var UINT32LE = "UINT32LE";
+var UINT32BE = "UINT32BE";
+var ESCAPED  = "ESCAPED";
+var STRING   = "STRING";
+
+/* private functions */
+// Find the UTF8 Byte Order Mark, if any.
+var bom8 = function(src) {
+  src.type = UTF8;
+  var buf = src.data;
+  src.bom = 0;
+  if(buf.length >= 3){
+    if (buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) {
+      src.bom = 3;
+    }
+  }
+}
+// Find the UTF16 Byte Order Mark, if any, and determine the UTF16 type.
+// Defaults to UTF16BE.
+// Throws exception if BOM does not match the specified type.
+var bom16 = function(src) {
+  var buf = src.data;
+  src.bom = 0;
+  switch (src.type) {
+  case UTF16:
+    src.type = UTF16BE;
+    if(buf.length >= 2){
+      if (buf[0] === 0xFE && buf[1] === 0xFF) {
+        src.bom = 2;
+      }else if (buf[0] === 0xFF && buf[1] === 0xFE) {
+        src.type = UTF16LE;
+        src.bom = 2;
+      }
+    }
+    break;
+  case UTF16BE:
+    src.type = UTF16BE;
+    if(buf.length >= 2){
+      if (buf[0] === 0xFE && buf[1] === 0xFF) {
+        src.bom = 2;
+      }else if (buf[0] === 0xFF && buf[1] === 0xFE) {
+        throw new TypeError('src type: "' + UTF16BE + '" specified but BOM is for "' + UTF16LE + '"');
+      }
+    }
+    break;
+  case UTF16LE:
+    src.type = UTF16LE;
+    if(buf.length >= 0){
+      if (buf[0] === 0xFE && buf[1] === 0xFF) {
+        throw new TypeError('src type: "' + UTF16LE + '" specified but BOM is for "' + UTF16BE + '"');
+      }else if (buf[0] === 0xFF && buf[1] === 0xFE) {
+        src.bom = 2;
+      }
+    }
+    break;
+  default:
+    throw new TypeError('UTF16 BOM: src type "' + src.type + '" unrecognized');
+    break;
+  }
+}
+//Find the UTF32 Byte Order Mark, if any, and determine the UTF32 type..
+//Defaults to UTF32BE.
+//Throws exception if BOM does not match the specified type.
+var bom32 = function(src) {
+  var buf = src.data;
+  src.bom = 0;
+  switch (src.type) {
+  case UTF32:
+    src.type = UTF32BE;
+    if(buf.length >= 4){
+      if (buf[0] === 0 && buf[1] === 0 && buf[2] === 0xFE && buf[3] === 0xFF) {
+        src.bom = 4;
+      }
+      if (buf[0] === 0xFF && buf[1] === 0xFE && buf[2] === 0 && buf[3] === 0) {
+        src.type = UTF32LE;
+        src.bom = 4;
+      }
+    }
+    break;
+  case UTF32BE:
+    src.type = UTF32BE;
+    if(buf.length >= 4){
+      if (buf[0] === 0 && buf[1] === 0 && buf[2] === 0xFE && buf[3] === 0xFF) {
+        src.bom = 4;
+      }
+      if (buf[0] === 0xFF && buf[1] === 0xFE && buf[2] === 0 && buf[3] === 0) {
+        throw new TypeError('src type: ' + UTF32BE + ' specified but BOM is for ' + UTF32LE + '"');
+      }
+    }
+    break;
+  case UTF32LE:
+    src.type = UTF32LE;
+    if(buf.length >= 4){
+      if (buf[0] === 0 && buf[1] === 0 && buf[2] === 0xFE && buf[3] === 0xFF) {
+        throw new Error('src type: "' + UTF32LE + '" specified but BOM is for "' + UTF32BE + '"');
+      }
+      if (buf[0] === 0xFF && buf[1] === 0xFE && buf[2] === 0 && buf[3] === 0) {
+        src.bom = 4;
+      }
+    }
+    break;
+  default:
+    throw new TypeError('UTF32 BOM: src type "' + src.type + '" unrecognized');
+    break;
+  }
+}
+// Validates the source encoding type and matching data.
+// If the BASE64: prefix is present, the base 64 decoding is done here as the initial step.
+// For type STRING, data must be a JavaScript string.
+// For type BASE64:*, data may be a string or Buffer.
+// For all other types, data must be a Buffer.
+//The BASE64: prefix is not allowed for type STRING.
+var validateSrc = function(type, data){
+  function getType(type){
+    var ret = {
+        type: "",
+        base64: false
+    }
+    var rx = /^(base64:)?([a-zA-Z0-9]+)$/i;
+    var result = rx.exec(type);
+    if (result) {
+      if (result[2]) {
+        ret.type = result[2].toUpperCase();
+      }
+      if (result[1]) {
+        ret.base64 = true;
+      }
+    }
+    return ret;
+  }
+  if (typeof(type) !== "string" || type === "") {
+    throw new TypeError('type: "' + type + '" not recognized');
+  }
+  var ret = getType(type.toUpperCase());
+  if(ret.base64){
+    /* handle base 64 */
+    if(ret.type === STRING){
+      throw new TypeError('type: "' + type + ' "BASE64:" prefix not allowed with type '+STRING);
+    }
+    if(Buffer.isBuffer(data)){
+      ret.data = trans.base64.decode(data);
+    }else if(typeof(data) === "string"){
+      var buf = Buffer.from(data, "ascii");
+      ret.data = trans.base64.decode(buf);
+    }else{
+      throw new TypeError('type: "' + type + ' unrecognized data type: typeof(data): ' + typeof(data));
+    }
+  }else{
+    ret.data = data;
+  }
+  switch (ret.type) {
+  case UTF8:
+    bom8(ret);
+    break;
+  case UTF16:
+  case UTF16BE:
+  case UTF16LE:
+    bom16(ret);
+    break;
+  case UTF32:
+  case UTF32BE:
+  case UTF32LE:
+    bom32(ret);
+    break;
+  case UINT16:
+    ret.type = UINT16BE;
+    break;
+  case UINT32:
+    ret.type = UINT32BE;
+    break;
+  case ASCII:
+    ret.type = UINT7;
+    break;
+  case BINARY:
+    ret.type = UINT8;
+    break;
+  case UINT7:
+  case UINT8:
+  case UINT16LE:
+  case UINT16BE:
+  case UINT32LE:
+  case UINT32BE:
+  case STRING:
+  case ESCAPED:
+    break;
+  default:
+    throw new TypeError('type: "' + type + '" not recognized');
+    break;
+  }
+  if(ret.type === STRING){
+    if(typeof(ret.data) !== "string"){
+      throw new TypeError('type: "' + type + '" but data is not a string');
+    }
+  }else{
+    if(!Buffer.isBuffer(ret.data)){
+      throw new TypeError('type: "' + type + '" but data is not a Buffer');
+    }
+  }
+  return ret;
+}
+// Disassembles and validates the destination type.
+// `chars` must be an Array of integers.
+// The :BASE64 suffix is not allowed for type STRING.
+var validateDst = function(type, chars){
+  function getType(type){
+    var fix, rem;
+    var ret = {
+        crlf: false,
+        lf: false,
+        base64: false,
+        type: ""
+    }
+    /*prefix, if any */
+    while(true){
+      rem = type;
+      fix = type.slice(0, 5);
+      if(fix === "CRLF:"){
+        ret.crlf = true;
+        rem = type.slice(5);
+        break;
+      }
+      fix = type.slice(0, 3);
+      if(fix === "LF:"){
+        ret.lf = true;
+        rem = type.slice(3);
+        break;
+      }
+      break;
+    }
+    /*suffix, if any */
+    fix = rem.split(":");
+    if(fix.length === 1){
+      ret.type = fix[0];
+      
+    }else if(fix.length === 2 && fix[1] === "BASE64"){
+      ret.base64 = true;
+      ret.type = fix[0];
+    }
+    return ret;
+  }
+  if(!Array.isArray(chars)){
+    throw new TypeError('dst chars: not array: "' + typeof(chars));
+  }
+  if (typeof(type) !== "string") {
+    throw new TypeError('dst type: not string: "' + typeof(type));
+  }
+  ret = getType(type.toUpperCase());
+  switch (ret.type) {
+  case UTF8:
+  case UTF16BE:
+  case UTF16LE:
+  case UTF32BE:
+  case UTF32LE:
+  case UINT7:
+  case UINT8:
+  case UINT16LE:
+  case UINT16BE:
+  case UINT32LE:
+  case UINT32BE:
+  case ESCAPED:
+    break;
+  case STRING:
+    if(ret.base64){
+      throw new TypeError('":BASE64" suffix not allowed with type '+STRING);
+    }
+    break;
+  case ASCII:
+    ret.type = UINT7;
+    break;
+  case BINARY:
+    ret.type = UINT8;
+    break;
+  case UTF16:
+    ret.type = UTF16BE;
+    break;
+  case UTF32:
+    ret.type = UTF32BE;
+    break;
+  case UINT16:
+    ret.type = UINT16BE;
+    break;
+  case UINT32:
+    ret.type = UINT32BE;
+    break;
+  default:
+    throw new TypeError('dst type unrecognized: "' + type + '" : must have form [crlf:|lf:]type[:base64]');
+    break;
+  }
+  return ret;
+}
+// Select and call the requested encoding function.
+var encode = function(type, chars){
+  switch(type){
+  case UTF8:
+    return trans.utf8.encode(chars);
+  case UTF16BE:
+    return trans.utf16be.encode(chars);
+  case UTF16LE:
+    return trans.utf16le.encode(chars);
+  case UTF32BE:
+    return trans.utf32be.encode(chars);
+  case UTF32LE:
+    return trans.utf32le.encode(chars);
+  case UINT7:
+    return trans.uint7.encode(chars);
+  case UINT8:
+    return trans.uint8.encode(chars);
+  case UINT16BE:
+    return trans.uint16be.encode(chars);
+  case UINT16LE:
+    return trans.uint16le.encode(chars);
+  case UINT32BE:
+    return trans.uint32be.encode(chars);
+  case UINT32LE:
+    return trans.uint32le.encode(chars);
+  case STRING:
+    return trans.string.encode(chars);
+  case ESCAPED:
+    return trans.escaped.encode(chars);
+  default:
+    throw new Error('encode type "'+type+'" not recognized')
+  }
+}
+// Select and call the requested decoding function.
+// `src` contains Byte Order Mark information as well as the source type and data.
+var decode = function(src){
+  switch(src.type){
+  case UTF8:
+    return trans.utf8.decode(src);
+  case UTF16LE:
+    return trans.utf16le.decode(src);
+  case UTF16BE:
+    return trans.utf16be.decode(src);
+  case UTF32BE:
+    return trans.utf32be.decode(src);
+  case UTF32LE:
+    return trans.utf32le.decode(src);
+  case UINT7:
+    return trans.uint7.decode(src.data);
+  case UINT8:
+    return trans.uint8.decode(src.data);
+  case UINT16BE:
+    return trans.uint16be.decode(src.data);
+  case UINT16LE:
+    return trans.uint16le.decode(src.data);
+  case UINT32BE:
+    return trans.uint32be.decode(src.data);
+  case UINT32LE:
+    return trans.uint32le.decode(src.data);
+  case STRING:
+    return trans.string.decode(src.data);
+  case ESCAPED:
+    return trans.escaped.decode(src.data);
+  default:
+    throw new Error('decode type "'+src.type+'" not recognized')
+  }
+}
+
+// The public decoding function. Returns an array of integers.
+exports.decode = function(type, data) {
+  var src = validateSrc(type, data);
+  return decode(src);
+}
+// The public encoding function. Returns a Buffer-typed byte array.
+exports.encode = function(type, chars) {
+  var c, buf;
+  var dst = validateDst(type, chars);
+  if(dst.crlf){
+    /* prefix with CRLF line end conversion, don't contaminate caller's chars array */
+    c = trans.lineEnds.crlf(chars);
+    buf = encode(dst.type, c);
+  }else if(dst.lf){
+    /* prefix with LF line end conversion, don't contaminate caller's chars array */
+    c = trans.lineEnds.lf(chars);
+    buf = encode(dst.type, c);
+  }else{
+    buf = encode(dst.type, chars);
+  }
+  if(dst.base64){
+    /* post base 64 encoding */
+    buf = trans.base64.encode(buf);
+  }
+  return buf;
+}
+// Converts data of type `srcType` to data of type `dstType`.
+// `srcData` may be a JavaScript String, or node.js Buffer, depending on the corresponding type.
+exports.convert = function(srcType, srcData, dstType) {
+  return _this.encode(dstType, _this.decode(srcType, srcData));
+}
+
+}).call(this,require("buffer").Buffer)
+},{"./transformers.js":7,"buffer":2}],7:[function(require,module,exports){
+(function (Buffer){
+// This module contains the actual encoding and decoding algorithms.
+"use strict;"
+var _this = this;
+
+/* decoding error codes */
+var NON_SHORTEST = 0xFFFFFFFC;
+var TRAILING     = 0xFFFFFFFD;
+var RANGE        = 0xFFFFFFFE;
+var ILL_FORMED   = 0xFFFFFFFF;
+
+/* mask[n] = 2**n - 1, ie. mask[n] = n bits on. e.g. mask[6] = %b111111 */
+var mask = [0, 1, 3, 7, 15, 31, 63, 127, 255, 511, 1023];
+
+/* ascii[n] = 'HH', where 0xHH = n, eg. ascii[254] = 'FE' */
+var ascii = [ 
+  '00', '01', '02', '03', '04', '05', '06', '07', '08', '09', '0A', '0B', '0C', '0D', '0E', '0F', '10', '11', '12', '13', '14', '15', '16', '17',
+  '18', '19', '1A', '1B', '1C', '1D', '1E', '1F', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '2A', '2B', '2C', '2D', '2E', '2F', '30',
+  '31', '32', '33', '34', '35', '36', '37', '38', '39', '3A', '3B', '3C', '3D', '3E', '3F', '40', '41', '42', '43', '44', '45', '46', '47', '48', '49',
+  '4A', '4B', '4C', '4D', '4E', '4F', '50', '51', '52', '53', '54', '55', '56', '57', '58', '59', '5A', '5B', '5C', '5D', '5E', '5F', '60', '61', '62',
+  '63', '64', '65', '66', '67', '68', '69', '6A', '6B', '6C', '6D', '6E', '6F', '70', '71', '72', '73', '74', '75', '76', '77', '78', '79', '7A', '7B',
+  '7C', '7D', '7E', '7F', '80', '81', '82', '83', '84', '85', '86', '87', '88', '89', '8A', '8B', '8C', '8D', '8E', '8F', '90', '91', '92', '93', '94',
+  '95', '96', '97', '98', '99', '9A', '9B', '9C', '9D', '9E', '9F', 'A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'AA', 'AB', 'AC', 'AD',
+  'AE', 'AF', 'B0', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'BA', 'BB', 'BC', 'BD', 'BE', 'BF', 'C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6',
+  'C7', 'C8', 'C9', 'CA', 'CB', 'CC', 'CD', 'CE', 'CF', 'D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9', 'DA', 'DB', 'DC', 'DD', 'DE', 'DF',
+  'E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'EA', 'EB', 'EC', 'ED', 'EE', 'EF', 'F0', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8',
+  'F9', 'FA', 'FB', 'FC', 'FD', 'FE', 'FF' ];
+
+/* vector of base 64 characters */
+var base64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=".split("");
+
+/* vector of base 64 character codes */
+var base64codes = [];
+base64chars.forEach(function(char){
+  base64codes.push(char.charCodeAt(0));
+});
+
+// The UTF8 algorithms.
+exports.utf8 = {
+    encode : function(chars) {
+      var x,y,z,u;
+      var bytes = [];
+      chars.forEach(function(char){
+        var byte;
+        if(char >= 0 && char <= 0x7f){
+          bytes.push(char);
+        }else if(char <= 0x7ff){
+          bytes.push(0xc0 + ((char >> 6) & mask[5]));
+          bytes.push(0x80 + (char & mask[6]));
+        }else if(char < 0xD800 || (char > 0xDFFF && char <= 0xffff)){
+          bytes.push(0xe0 + ((char >> 12) & mask[4]));
+          bytes.push(0x80 + ((char >> 6) & mask[6]));
+          bytes.push(0x80 + (char & mask[6]));
+        }else if(char >= 0x10000 && char <= 0x10ffff){
+          u = (char >> 16) & mask[5];
+          bytes.push(0xf0 + (u >> 2));
+          bytes.push(0x80 + ((u & mask[2]) << 4) + ((char >> 12) & mask[4]));
+          bytes.push(0x80 + ((char >> 6) & mask[6]));
+          bytes.push(0x80 + (char & mask[6]));
+        }else{
+          throw new RangeError("utf8.encode: character out of range: char: " + char);
+        }
+      });
+      return Buffer.from(bytes);
+    },
+  decode : function(src) {
+    /* bytes functions return error for non-shortest forms & values out of range */
+    function bytes2(b1, b2){
+      /*U+0080..U+07FF */
+      /* 00000000 00000yyy yyxxxxxx | 110yyyyy 10xxxxxx */
+      if((b2 & 0xC0) !== 0x80){
+        return TRAILING;
+      }
+      var x = ((b1 & mask[5]) << 6) + (b2 & mask[6]);
+      if(x < 0x80){
+        return NON_SHORTEST;
+      }
+      return x;
+    }
+    function bytes3(b1, b2, b3){
+      /*U+0800..U+FFFF */
+      /* 00000000 zzzzyyyy yyxxxxxx | 1110zzzz 10yyyyyy 10xxxxxx */
+      if(((b3 & 0xC0) !== 0x80) || ((b2 & 0xC0) !== 0x80)){
+        return TRAILING;
+      }
+      var x = ((b1 & mask[4]) << 12) + ((b2 & mask[6]) << 6) + (b3 & mask[6]);
+      if(x < 0X800){
+        return NON_SHORTEST;
+      }
+      if((x >= 0xD800) && (x <= 0xDFFF)){
+        return RANGE;
+      }
+      return x;
+    }
+    function bytes4(b1, b2, b3, b4){
+      /*U+10000..U+10FFFF */
+      /* 000uuuuu zzzzyyyy yyxxxxxx | 11110uuu 10uuzzzz 10yyyyyy 10xxxxxx */
+      if(((b4 & 0xC0) !== 0x80) || ((b3 & 0xC0) !== 0x80) || ((b2 & 0xC0) !== 0x80)){
+        return TRAILING;
+      }
+      var x = ((((b1 & mask[3]) << 2)
+          + ((b2 >> 4) & mask[2])) << 16)
+          + ((b2 & mask[4]) << 12)
+          + ((b3 & mask[6]) << 6)
+          + (b4 & mask[6]);
+      if(x < 0x10000){
+        return NON_SHORTEST;
+      }
+      if(x > 0x10FFFF){
+        return RANGE;
+      }
+      return x;
+    }
+    var c, b1, b2, b3, b4, i1, i2, i3, inc;
+    var len = src.data.length;
+    var i = src.bom;
+    var chars = [];
+    while(i < len){
+      b1 = src.data[i];
+      c = ILL_FORMED;
+      while(true){
+        if(b1 >=0 && b1 <=0x7f){
+          /*U+0000..U+007F 00..7F*/
+          c = b1;
+          inc = 1;
+          break;
+        }
+        i1 = i + 1;
+        if((i1 < len) && (b1 >= 0xc2 && b1 <= 0xdf)){
+          /*U+0080..U+07FF C2..DF 80..BF*/
+          c = bytes2(b1, src.data[i1]);
+          inc = 2;
+          break;
+        }
+        i2 = i + 2
+        if((i2 < len) && (b1 >= 0xe0 && b1 <= 0xef)){
+          /*U+0800..U+FFFF */
+          c = bytes3(b1, src.data[i1], src.data[i2]);
+          inc = 3;
+          break;
+        }
+        i3 = i + 3
+        if((i3 < len) && (b1 >= 0xf0 && b1 <= 0xf4)){
+          /*U+10000..U+10FFFF */
+          c = bytes4(b1, src.data[i1], src.data[i2], src.data[i3]);
+          inc = 4;
+          break;
+        }
+        /* if we fall through to here, it is an ill-formed sequence*/
+        break;
+      }
+      if(c > 0x10FFFF){
+        var at = "byte["+i+"]";
+        if(c === ILL_FORMED){
+          throw new RangeError("utf8.decode: ill-formed UTF8 byte sequence found at: "+at);
+        }
+        if(c === TRAILING){
+          throw new RangeError("utf8.decode: illegal trailing byte found at: "+at);
+        }
+        if(c === RANGE){
+          throw new RangeError("utf8.decode: code point out of range found at: "+at);
+        }
+        if(c === NON_SHORTEST){
+          throw new RangeError("utf8.decode: non-shortest form found at: "+at);
+        }
+        throw new RangeError("utf8.decode: unrecognized error found at: "+at);
+      }
+      chars.push(c);
+      i += inc;
+    }
+    return chars;
+  },
+}
+
+//The UTF16BE algorithms.
+exports.utf16be = {
+  encode : function(chars) {
+    var bytes = [];
+    var char, h, l;
+    for(var i = 0; i < chars.length; i += 1){
+      char = chars[i];
+      if( ((char >= 0) && (char <= 0xD7FF)) || ((char >= 0xE000) && (char <= 0xFFFF)) ){
+        bytes.push((char >> 8) & mask[8]);
+        bytes.push(char & mask[8]);
+      }else if(char >= 0x10000 && char <= 0x10FFFF){
+        l = char - 0x10000;
+        h = 0xD800 + (l >> 10);
+        l = 0xDC00 + (l & mask[10]);
+        bytes.push((h >> 8) & mask[8]);
+        bytes.push(h & mask[8]);
+        bytes.push((l >> 8) & mask[8]);
+        bytes.push(l & mask[8]);
+      }else{
+        throw new RangeError("utf16be.encode: UTF16BE value out of range: char["+i+"]: "+char);
+      }
+    }
+    return Buffer.from(bytes);
+  },
+  decode : function(src) {
+    /* assumes caller has insured that src.data is a Buffer of bytes */
+    if(src.data.length % 2 > 0){
+      throw new RangeError("utf16be.decode: data length must be even multiple of 2: length: "+src.data.length);
+    }
+    var chars = [];
+    var len = src.data.length;
+    var i = src.bom;
+    var j = 0;
+    var c, inc, i1, i2, i3, high, low;
+    while(i < len){
+      while(true){
+        i1 = i + 1;
+        if(i1 < len){
+          high = (src.data[i] << 8) + src.data[i1];
+          if((high < 0xD800) || (high > 0xDFFF)){
+            c = high;
+            inc = 2;
+            break;
+          }
+          i3 = i + 3;
+          if(i3 < len){
+            low = (src.data[i + 2] << 8) + src.data[i3];
+            if((high <= 0xDBFF) && (low >= 0xDC00) && (low <= 0xDFFF)){
+              c = 0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00);
+              inc = 4;
+              break;
+            }
+          }
+        }
+        /* if we fall through to here, it is an ill-formed sequence*/
+        throw new RangeError("utf16be.decode: ill-formed UTF16BE byte sequence found: byte["+i+"]");
+        break;
+      }
+      chars[j++] = c;
+      i += inc;
+    }
+    return chars;
+  },
+}
+
+//The UTF16LE algorithms.
+exports.utf16le = {
+  encode : function(chars) {
+    var bytes = [];
+    var char, h, l;
+    for(var i = 0; i < chars.length; i += 1){
+      char = chars[i];
+      if( ((char >= 0) && (char <= 0xD7FF)) || ((char >= 0xE000) && (char <= 0xFFFF)) ){
+        bytes.push(char & mask[8]);
+        bytes.push((char >> 8) & mask[8]);
+      }else if(char >= 0x10000 && char <= 0x10FFFF){
+        l = char - 0x10000;
+        h = 0xD800 + (l >> 10);
+        l = 0xDC00 + (l & mask[10]);
+        bytes.push(h & mask[8]);
+        bytes.push((h >> 8) & mask[8]);
+        bytes.push(l & mask[8]);
+        bytes.push((l >> 8) & mask[8]);
+      }else{
+        throw new RangeError("utf16le.encode: UTF16LE value out of range: char["+i+"]: "+char);
+      }
+    }
+    return Buffer.from(bytes);
+  },
+  decode : function(src) {
+    /* assumes caller has insured that src.data is a Buffer of bytes */
+    if(src.data.length % 2 > 0){
+      throw new RangeError("utf16le.decode: data length must be even multiple of 2: length: "+src.data.length);
+    }
+    var chars = [];
+    var len = src.data.length;
+    var i = src.bom;
+    var j = 0;
+    var c, inc, i1, i2, i3, high, low;
+    while(i < len){
+      while(true){
+        i1 = i + 1;
+        if(i1 < len){
+          high = (src.data[i1] << 8) + src.data[i];
+          if((high < 0xD800) || (high > 0xDFFF)){
+            c = high;
+            inc = 2;
+            break;
+          }
+          i3 = i + 3;
+          if(i3 < len){
+            low = (src.data[i3] << 8) + src.data[i + 2];
+            if((high <= 0xDBFF) && (low >= 0xDC00) && (low <= 0xDFFF)){
+              c = 0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00);
+              inc = 4;
+              break;
+            }
+          }
+        }
+        /* if we fall through to here, it is an ill-formed sequence*/
+        throw new RangeError("utf16le.decode: ill-formed UTF16LE byte sequence found: byte["+i+"]");
+        break;
+      }
+      chars[j++] = c;
+      i += inc;
+    }
+    return chars;
+  },
+}
+
+//The UTF32BE algorithms.
+exports.utf32be = {
+  encode : function(chars) {
+    var buf = Buffer.alloc(chars.length * 4);
+    var i = 0;
+    chars.forEach(function(char){
+      if(((char >= 0xD800) && (char <= 0xDFFF)) || (char > 0x10FFFF)){
+        throw new RangeError("utf32be.encode: UTF32BE character code out of range: char["+i/4+"]: " + char);
+      }
+      buf[i++] = (char >> 24) & mask[8];
+      buf[i++] = (char >> 16) & mask[8];
+      buf[i++] = (char >> 8) & mask[8];
+      buf[i++] = char & mask[8];
+    });
+    return buf;
+  },
+  decode : function(src) {
+    /* caller to insure src.data is a Buffer of bytes */
+    if(src.data.length % 4 > 0 ){
+      throw new RangeError("utf32be.decode: UTF32BE byte length must be even multiple of 4: length: " + src.data.length);
+    }
+    var chars = [];
+    for(var i = src.bom; i < src.data.length; i += 4){
+      var char = (src.data[i]<<24) + (src.data[i+1]<<16) + (src.data[i+2]<<8) + src.data[i+3];
+      if(((char >= 0xD800) && (char <= 0xDFFF)) || (char > 0x10FFFF)){
+        throw new RangeError("utf32be.decode: UTF32BE character code out of range: char["+i/4+"]: " + char);
+      }
+      chars.push(char);
+    }
+    return chars;
+  }
+}
+
+//The UTF32LE algorithms.
+exports.utf32le = {
+  encode : function(chars) {
+    var buf = Buffer.alloc(chars.length * 4);
+    var i = 0;
+    chars.forEach(function(char){
+      if(((char >= 0xD800) && (char <= 0xDFFF)) || (char > 0x10FFFF)){
+        throw new RangeError("utf32le.encode: UTF32LE character code out of range: char["+i/4+"]: " + char);
+      }
+      buf[i++] = char & mask[8];
+      buf[i++] = (char >> 8) & mask[8];
+      buf[i++] = (char >> 16) & mask[8];
+      buf[i++] = (char >> 24) & mask[8];
+    });
+    return buf;
+  },
+  decode : function(src) {
+    /* caller to insure src.data is a Buffer of bytes */
+    if(src.data.length % 4 > 0 ){
+      throw new RangeError("utf32be.decode: UTF32LE byte length must be even multiple of 4: length: " + src.data.length);
+    }
+    var chars = [];
+    for(var i = src.bom; i < src.data.length; i += 4){
+      var char = (src.data[i+3]<<24) + (src.data[i+2]<<16) + (src.data[i+1]<<8) + src.data[i];
+      if(((char >= 0xD800) && (char <= 0xDFFF)) || (char > 0x10FFFF)){
+        throw new RangeError("utf32le.encode: UTF32LE character code out of range: char["+i/4+"]: " + char);
+      }
+      chars.push(char);
+    }
+    return chars;
+  }
+}
+
+//The UINT7 algorithms. ASCII or 7-bit unsigned integers.
+exports.uint7 = {
+    encode : function(chars) {
+      var buf = Buffer.alloc(chars.length);
+      for(var i = 0; i < chars.length; i += 1){
+        if(chars[i] > 0x7f){
+          throw new RangeError("uint7.encode: UINT7 character code out of range: char["+i+"]: " + chars[i]);
+        }
+        buf[i] = chars[i];
+      }
+      return buf;
+    },
+    decode : function(buf) {
+      var chars = [];
+      for(var i = 0; i < buf.length; i += 1){
+        if(buf[i] > 0x7f){
+          throw new RangeError("uint7.decode: UINT7 character code out of range: byte["+i+"]: " + buf[i]);
+        }
+        chars[i] = buf[i];
+      }
+      return chars;
+    }
+  }
+
+//The UINT8 algorithms. BINARY, Latin 1 or 8-bit unsigned integers.
+exports.uint8 = {
+  encode : function(chars) {
+    var buf = Buffer.alloc(chars.length);
+    for(var i = 0; i < chars.length; i += 1){
+      if(chars[i] > 0xff){
+        throw new RangeError("uint8.encode: UINT8 character code out of range: char["+i+"]: " + chars[i]);
+      }
+      buf[i] = chars[i];
+    }
+    return buf;
+  },
+  decode : function(buf) {
+    var chars = [];
+    for(var i = 0; i < buf.length; i += 1){
+      chars[i] = buf[i];
+    }
+    return chars;
+  }
+}
+
+//The UINT16BE algorithms. Big-endian 16-bit unsigned integers.
+exports.uint16be = {
+  encode : function(chars) {
+    var buf = Buffer.alloc(chars.length * 2);
+    var i = 0;
+    chars.forEach(function(char){
+      if(char > 0xffff){
+        throw new RangeError("uint16be.encode: UINT16BE character code out of range: char["+i/2+"]: " + char);
+      }
+      buf[i++] = (char >> 8) & mask[8];
+      buf[i++] = char & mask[8];
+    });
+    return buf;
+  },
+  decode : function(buf) {
+    if(buf.length % 2 > 0 ){
+      throw new RangeError("uint16be.decode: UINT16BE byte length must be even multiple of 2: length: " + buf.length);
+    }
+    var chars = [];
+    for(var i = 0; i < buf.length; i += 2){
+      chars.push((buf[i]<<8) + buf[i+1]);
+    }
+    return chars;
+  }
+}
+
+//The UINT16LE algorithms. Little-endian 16-bit unsigned integers.
+exports.uint16le = {
+  encode : function(chars) {
+    var buf = Buffer.alloc(chars.length * 2);
+    var i = 0;
+    chars.forEach(function(char){
+      if(char > 0xffff){
+        throw new RangeError("uint16le.encode: UINT16LE character code out of range: char["+i/2+"]: " + char);
+      }
+      buf[i++] = char & mask[8];
+      buf[i++] = (char >> 8) & mask[8];
+    });
+    return buf;
+  },
+  decode : function(buf) {
+    if(buf.length % 2 > 0 ){
+      throw new RangeError("uint16le.decode: UINT16LE byte length must be even multiple of 2: length: " + buf.length);
+    }
+    var chars = [];
+    for(var i = 0; i < buf.length; i += 2){
+      chars.push((buf[i+1]<<8) + buf[i]);
+    }
+    return chars;
+  }
+}
+
+//The UINT32BE algorithms. Big-endian 32-bit unsigned integers.
+exports.uint32be = {
+  encode : function(chars) {
+    var buf = Buffer.alloc(chars.length * 4);
+    var i = 0;
+    chars.forEach(function(char){
+      buf[i++] = (char >> 24) & mask[8];
+      buf[i++] = (char >> 16) & mask[8];
+      buf[i++] = (char >> 8) & mask[8];
+      buf[i++] = char & mask[8];
+    });
+    return buf;
+  },
+  decode : function(buf) {
+    if(buf.length % 4 > 0 ){
+      throw new RangeError("uint32be.decode: UINT32BE byte length must be even multiple of 4: length: " + buf.length);
+    }
+    var chars = [];
+    for(var i = 0; i < buf.length; i += 4){
+      chars.push((buf[i]<<24) + (buf[i+1]<<16) + (buf[i+2]<<8) + buf[i+3]);
+    }
+    return chars;
+  }
+}
+
+//The UINT32LE algorithms. Little-endian 32-bit unsigned integers.
+exports.uint32le = {
+  encode : function(chars) {
+    var buf = Buffer.alloc(chars.length * 4);
+    var i = 0;
+    chars.forEach(function(char){
+      buf[i++] = char & mask[8];
+      buf[i++] = (char >> 8) & mask[8];
+      buf[i++] = (char >> 16) & mask[8];
+      buf[i++] = (char >> 24) & mask[8];
+    });
+    return buf;
+  },
+  decode : function(buf) {
+    /* caller to insure buf is a Buffer of bytes */
+    if(buf.length % 4 > 0 ){
+      throw new RangeError("uint32le.decode: UINT32LE byte length must be even multiple of 4: length: " + buf.length);
+    }
+    var chars = [];
+    for(var i = 0; i < buf.length; i += 4){
+      chars.push((buf[i+3]<<24) + (buf[i+2]<<16) + (buf[i+1]<<8) + buf[i]);
+    }
+    return chars;
+  }
+}
+
+// The STRING algorithms. Converts JavaScript strings to Array of 32-bit integers and vice versa. 
+// Uses the node.js Buffer's native "utf16le" capabilites.
+exports.string = {
+  encode: function(chars){
+    return _this.utf16le.encode(chars).toString("utf16le");
+  },
+  decode: function(str){
+    return _this.utf16le.decode({bom: 0, data: Buffer.from(str, "utf16le")});
+  }
+}
+
+//The ESCAPED algorithms. 
+// Note that ESCAPED format contains only ASCII characters.
+// The characters are always in the form of a Buffer of bytes.
+exports.escaped = {
+// Encodes an Array of 32-bit integers into ESCAPED format.
+  encode : function(chars) {
+    var bytes = [];
+    for (var i = 0; i < chars.length; i += 1) {
+      var char = chars[i];
+      if (char === 96) {
+        bytes.push(char);
+        bytes.push(char);
+      } else if (char === 10) {
+        bytes.push(char);
+      } else if (char >= 32 && char <= 126) {
+        bytes.push(char);
+      } else{
+        var str = "";
+        if (char >= 0 && char <= 31) {
+          str += "`x" + ascii[char];
+        } else if (char >= 127 && char <= 255) {
+          str += "`x" + ascii[char];
+        } else if (char >= 0x100 && char <= 0xffff) {
+          str += "`u" + ascii[(char >> 8) & mask[8]] + ascii[char & mask[8]];
+        } else if (char >= 0x10000 && char <= 0xffffffff) {
+          str += "`u{";
+          var digit = (char >> 24) & mask[8];
+          if (digit > 0) {
+            str += ascii[digit];
+          }
+          str += ascii[(char >> 16) & mask[8]] + ascii[(char >> 8) & mask[8]] + ascii[char & mask[8]] + "}";
+        } else {
+          throw new Error("escape.encode(char): char > 0xffffffff not allowed");
+        }
+        var buf = Buffer.from(str);
+        buf.forEach(function(b){
+          bytes.push(b);
+        });
+      }
+    }
+    return Buffer.from(bytes);
+  },
+  // Decodes ESCAPED format from a Buffer of bytes to an Array of 32-bit integers.
+  decode : function(buf) {
+    function isHex(hex){
+      if((hex >= 48 && hex <= 57) || (hex >= 65 && hex <= 70) || (hex >= 97 && hex <= 102)){
+        return true;
+      }
+      return false;
+    }
+    function getx(i, len, buf){
+      var ret = {char: null, nexti: i + 2, error: true};
+      if(i + 1 < len ){
+        if(isHex(buf[i]) && isHex(buf[i+1])){
+          var str = String.fromCodePoint(buf[i], buf[i+1]);
+          ret.char = parseInt(str, 16);
+          if(!isNaN(ret.char)){
+            ret.error = false;
+          }
+        }
+      }
+      return ret;
+    }
+    function getu(i, len, buf){
+      var ret = {char: null, nexti: i + 4, error: true};
+      if(i + 3 < len ){
+        if(isHex(buf[i]) && isHex(buf[i+1]) && isHex(buf[i+2]) && isHex(buf[i+3])){
+          var str = String.fromCodePoint(buf[i], buf[i+1], buf[i+2], buf[i+3]);
+          ret.char = parseInt(str, 16);
+          if(!isNaN(ret.char)){
+            ret.error = false
+          }
+        }
+      }
+      return ret;
+    }
+    function getU(i, len, buf){
+      var ret = {char: null, nexti: i + 4, error: true};
+      var str = "";
+      while(i < len && isHex(buf[i])){
+        str += String.fromCodePoint(buf[i]);
+        i += 1;
+      }
+      ret.char = parseInt(str, 16);
+      if(buf[i] === 125 && !isNaN(ret.char)){
+        ret.error = false
+      }
+      ret.nexti = i + 1;
+      return ret;
+    }
+    var chars = [];
+    var len = buf.length;
+    var i1, ret, error;
+    var i = 0;
+    while(i < len){
+      while(true){
+        error = true;
+        if(buf[i] !== 96){
+          /* unescaped character */
+          chars.push(buf[i]);
+          i += 1;
+          error = false;
+          break;
+        }
+        i1 = i + 1;
+        if(i1 >= len){
+          break;
+        }
+        if(buf[i1] === 96){
+          /* escaped grave accent */
+          chars.push(96);
+          i += 2;
+          error = false;
+          break;
+        }
+        if(buf[i1] === 120){
+          ret = getx(i1+1, len, buf);
+          if(ret.error){
+            break;
+          }
+          /* escaped hex */
+          chars.push(ret.char);
+          i = ret.nexti;
+          error = false;
+          break;
+        }
+        if(buf[i1] === 117){
+          if(buf[i1+1] === 123){
+            ret = getU(i1 + 2, len, buf);
+            if(ret.error){
+              break;
+            }
+            /* escaped utf-32 */
+            chars.push(ret.char);
+            i = ret.nexti;
+            error = false;
+            break;
+          }
+          ret = getu(i1 + 1, len, buf);
+          if(ret.error){
+            break;
+          }
+          /* escaped utf-16 */
+          chars.push(ret.char);
+          i = ret.nexti;
+          error = false;
+          break;
+        }
+        break;
+      }
+      if(error){
+        throw new Error("escaped.decode: ill-formed escape sequence at buf["+i+"]");
+      }
+    }
+    return chars;
+  }
+}
+
+// The line end conversion algorigthms.
+var CR = 13;
+var LF = 10;
+exports.lineEnds = {
+    crlf: function(chars){
+      var lfchars = [];
+      var i = 0;
+      while(i < chars.length){
+        switch(chars[i]){
+        case CR:
+          if((i + 1) < chars.length && chars[i + 1] === LF){
+            i += 2;
+          }else{
+            i += 1
+          }
+          lfchars.push(CR);
+          lfchars.push(LF);
+          break;
+        case LF:
+          lfchars.push(CR);
+          lfchars.push(LF);
+          i += 1;
+          break;
+        default:
+          lfchars.push(chars[i]);
+          i += 1;
+          break;
+        }
+      }
+      if(lfchars.length > 0 && lfchars[lfchars.length - 1] !== LF){
+        lfchars.push(CR);
+        lfchars.push(LF);
+      }
+      return lfchars;
+    },
+    lf: function(chars){
+      var lfchars = [];
+      var i = 0;
+      while(i < chars.length){
+        switch(chars[i]){
+        case CR:
+          if((i + 1) < chars.length && chars[i + 1] === LF){
+            i += 2;
+          }else{
+            i += 1
+          }
+          lfchars.push(LF);
+          break;
+        case LF:
+          lfchars.push(LF);
+          i += 1;
+          break;
+        default:
+          lfchars.push(chars[i]);
+          i += 1;
+          break;
+        }
+      }
+      if(lfchars.length > 0 && lfchars[lfchars.length - 1] !== LF){
+        lfchars.push(LF);
+      }
+      return lfchars;
+    }
+}
+
+// The base 64 algorithms.
+exports.base64 = {
+  encode : function(buf) {
+    if(buf.length === 0){
+      return Buffer.alloc(0);
+    }
+    var i, j, n;
+    var tail = buf.length % 3;
+    tail = (tail > 0) ? 3-tail : 0;
+    var units = (buf.length + tail)/3;
+    var base64 = Buffer.alloc(units * 4);
+    if(tail > 0){
+      units -= 1;
+    }
+    i = 0;
+    j = 0;
+    for(var u = 0; u < units; u += 1){
+      n = buf[i++] << 16;
+      n += buf[i++] << 8;
+      n += buf[i++];
+      base64[j++] = base64codes[(n >> 18) & mask[6]];
+      base64[j++] = base64codes[(n >> 12) & mask[6]];
+      base64[j++] = base64codes[(n >> 6) & mask[6]];
+      base64[j++] = base64codes[n & mask[6]];
+    }
+    if (tail === 0) {
+      return base64;
+    }
+    if (tail === 1) {
+      n = buf[i++] << 16;
+      n += buf[i] << 8;
+      base64[j++] = base64codes[(n >> 18) & mask[6]];
+      base64[j++] = base64codes[(n >> 12) & mask[6]];
+      base64[j++] = base64codes[(n >> 6) & mask[6]];
+      base64[j] = base64codes[64];
+      return base64;
+    }
+    if (tail === 2) {
+      n = buf[i] << 16;
+      base64[j++] = base64codes[(n >> 18) & mask[6]];
+      base64[j++] = base64codes[(n >> 12) & mask[6]];
+      base64[j++] = base64codes[64];
+      base64[j] = base64codes[64];
+      return base64;
+    }
+  },
+  decode: function(codes){
+    /* remove white space and ctrl characters, validate & translate characters */
+    function validate(buf){
+      var chars = [];
+      var tail = 0;
+      for (var i = 0; i < buf.length; i += 1) {
+        var char = buf[i];
+        while(true){
+          if (char === 32 || char === 9 || char === 10 || char === 13) {
+            break;
+          }
+          if (char >= 65 && char <= 90) {
+            chars.push(char - 65);
+            break;
+          }
+          if (char >= 97 && char <= 122) {
+            chars.push(char - 71);
+            break;
+          }
+          if (char >= 48 && char <= 57) {
+            chars.push(char + 4);
+            break;
+          }
+          if (char === 43) {
+            chars.push(62);
+            break;
+          }
+          if (char === 47) {
+            chars.push(63);
+            break;
+          }
+          if (char === 61) {
+            chars.push(64);
+            tail += 1;
+            break;
+          }
+          /* invalid character */
+          throw new RangeError("base64.decode: invalid character buf[" + i + "]: " + char);
+          break;
+        }
+      }
+      /* validate length */
+      if (chars.length % 4 > 0) {
+        throw new RangeError("base64.decode: string length not integral multiple of 4: " + chars.length);
+      }
+      /* validate tail */
+      switch(tail){
+      case 0:
+        break;
+      case 1:
+        if (chars[chars.length - 1] !== 64) {
+          throw new RangeError("base64.decode: one tail character found: not last character");
+        }
+        break;
+      case 2:
+        if ((chars[chars.length - 1] !== 64) || (chars[chars.length - 2] !== 64)) {
+          throw new RangeError("base64.decode: two tail characters found: not last characters");
+        }
+        break;
+      default:
+        throw new RangeError("base64.decode: more than two tail characters found: " + tail);
+        break;
+      }
+      return {tail: tail, buf: Buffer.from(chars)}
+    }
+    
+    if(codes.length === 0){
+      return Buffer.alloc(0);
+    }
+    var val = validate(codes);
+    var tail = val.tail;
+    var base64 = val.buf;
+    var i, j, n;
+    var units = base64.length / 4;
+    var buf = Buffer.alloc((units*3) - tail);
+    if(tail > 0){
+      units -= 1;
+    }
+    j = 0;
+    i = 0;
+    for(var u = 0; u < units; u += 1) {
+      n = base64[i++] << 18;
+      n += base64[i++] << 12;
+      n += base64[i++] << 6;
+      n += base64[i++];
+      buf[j++] = (n >> 16) & mask[8];
+      buf[j++] = (n >> 8) & mask[8];
+      buf[j++] = n & mask[8];
+    }
+    if (tail === 1) {
+      n = base64[i++] << 18;
+      n += base64[i++] << 12;
+      n += base64[i] << 6;
+      buf[j++] = (n >> 16) & mask[8];
+      buf[j] = (n >> 8) & mask[8];
+    }
+    if (tail === 2) {
+      n = base64[i++] << 18;
+      n += base64[i++] << 12;
+      buf[j] = (n >> 16) & mask[8];
+    }
+    return buf;
+    
+  },
+  // Converts a base 64 Buffer of bytes to a JavaScript string with line breaks.
+  toString: function(buf){
+    if(buf.length % 4 > 0){
+      throw new RangeError("base64.toString: input buffer length not multiple of 4: " + buf.length);
+    }
+    var str = "";
+    var lineLen = 0;
+    function buildLine(c1, c2, c3, c4) {
+      switch (lineLen) {
+      case 76:
+        str += "\r\n" + c1 + c2 + c3 + c4;
+        lineLen = 4;
+        break;
+      case 75:
+        str += c1 + "\r\n" + c2 + c3 + c4;
+        lineLen = 3;
+        break;
+      case 74:
+        str += c1 + c2 + "\r\n" + c3 + c4;
+        lineLen = 2;
+        break;
+      case 73:
+        str += c1 + c2 + c3 + "\r\n" + c4;
+        lineLen = 1;
+        break;
+      default:
+        str += c1 + c2 + c3 + c4;
+        lineLen += 4;
+        break;
+      }
+    }
+    function validate(c){
+      if(c >= 65 && c <= 90){
+        return true
+      }
+      if(c >= 97 && c <= 122){
+        return true
+      }
+      if(c >= 48 && c <= 57){
+        return true
+      }
+      if(c === 43){
+        return true
+      }
+      if(c === 47){
+        return true
+      }
+      if(c === 61){
+        return true
+      }
+      return false;
+    }
+    for(var i = 0; i < buf.length; i += 4){
+      for(var j = i; j < i+4; j +=1){
+        if(!validate(buf[j])){
+          throw new RangeError("base64.toString: buf["+j+"]: "+buf[j]+" : not valid base64 character code");
+        }
+      }
+      buildLine(String.fromCharCode(buf[i]), String.fromCharCode(buf[i+1]), String.fromCharCode(buf[i+2]), String.fromCharCode(buf[i+3]));
+      
+    }
+    return str;
+  },
+}
+
+}).call(this,require("buffer").Buffer)
+},{"buffer":2}],8:[function(require,module,exports){
 // This is the `apg-exp` object constructor.
 // `apg-exp` functions similarly to the built-in JavaScript `RegExp` pattern matching engine.
 // However, patterns are described with an [SABNF]()
@@ -2240,7 +3952,7 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
     return resultFuncs.s.sourceToHtmlPage(this);
   }
 };
-},{"./exec.js":8,"./flags.js":9,"./replace.js":12,"./result.js":13,"./sabnf-generator.js":14,"./split.js":15,"apg-lib":18}],7:[function(require,module,exports){
+},{"./exec.js":10,"./flags.js":11,"./replace.js":14,"./result.js":15,"./sabnf-generator.js":16,"./split.js":17,"apg-lib":21}],9:[function(require,module,exports){
 // This function is used to generate a browser-accessible copy of `apg-exp`.
 // To generate and minify:
 // ```
@@ -2289,7 +4001,7 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
   this.apglib = require("apg-lib");
 })()
 
-},{"./apg-exp.js":6,"apg-lib":18}],8:[function(require,module,exports){
+},{"./apg-exp.js":8,"apg-lib":21}],10:[function(require,module,exports){
 // This module implements the `exec()` function.
 "use strict;"
 var funcs = require('./result.js');
@@ -2582,7 +4294,7 @@ exports.testAnchor = function(p) {
   return parserResult.success;
 }
 
-},{"./result.js":13}],9:[function(require,module,exports){
+},{"./result.js":15}],11:[function(require,module,exports){
 // This module analyzes the flags string, setting the true/false flags accordingly.
 "use strict;"
 module.exports = function(obj, flags) {
@@ -2657,7 +4369,7 @@ module.exports = function(obj, flags) {
   Object.defineProperty(obj, "sticky", readonly);
   return error;
 }
-},{}],10:[function(require,module,exports){
+},{}],12:[function(require,module,exports){
 // This module will parse the replacement string and locate any special replacement characters.
 "use strict;"
 var errorName = "apgex: replace(): ";
@@ -2791,8 +4503,8 @@ module.exports = function(p, str){
   }
   return ret;
 }
-},{"./replace-grammar.js":11,"apg-lib":18}],11:[function(require,module,exports){
-// Generated by JavaScript APG, Version 2.0 [`apg-js2`](https://github.com/ldthomas/apg-js2)
+},{"./replace-grammar.js":13,"apg-lib":21}],13:[function(require,module,exports){
+// Generated by JavaScript APG, Version [`apg-js2`](https://github.com/ldthomas/apg-js2)
 module.exports = function(){
 "use strict";
   //```
@@ -2800,7 +4512,7 @@ module.exports = function(){
   //      rules = 11
   //       udts = 0
   //    opcodes = 39
-  //        ABNF original opcodes
+  //        ---   ABNF original opcodes
   //        ALT = 4
   //        CAT = 4
   //        REP = 4
@@ -2808,7 +4520,7 @@ module.exports = function(){
   //        TLS = 7
   //        TBS = 2
   //        TRG = 6
-  //        SABNF superset opcodes
+  //        ---   SABNF superset opcodes
   //        UDT = 0
   //        AND = 0
   //        NOT = 0
@@ -2819,20 +4531,6 @@ module.exports = function(){
   //        AEN = 0
   // characters = [10 - 65535]
   //```
-  /* CALLBACK LIST PROTOTYPE (true, false or function reference) */
-  this.callbacks = [];
-  this.callbacks['alpha'] = false;
-  this.callbacks['any-other'] = false;
-  this.callbacks['digit'] = false;
-  this.callbacks['error'] = false;
-  this.callbacks['escape'] = false;
-  this.callbacks['match'] = false;
-  this.callbacks['name'] = false;
-  this.callbacks['prefix'] = false;
-  this.callbacks['rule'] = false;
-  this.callbacks['suffix'] = false;
-  this.callbacks['xname'] = false;
-
   /* OBJECT IDENTIFIER (for internal parser use) */
   this.grammarObject = 'grammarObject';
 
@@ -2947,7 +4645,7 @@ module.exports = function(){
   }
 }
 
-},{}],12:[function(require,module,exports){
+},{}],14:[function(require,module,exports){
 // This module implements the `replace()` function.
 "use strict;"
 var errorName = "apg-exp: replace(): ";
@@ -3097,13 +4795,13 @@ exports.replaceFunction = function(p, str, func) {
   }
 }
 
-},{"./parse-replacement.js":10,"./replace-grammar.js":11,"apg-lib":18}],13:[function(require,module,exports){
+},{"./parse-replacement.js":12,"./replace-grammar.js":13,"apg-lib":21}],15:[function(require,module,exports){
 // This module defines all of the display functions. Text and HTML displays of
 // the grammar source, the result object and the `apg-exp` "last match" object.
 "use strict;"
 var apglib = require("apg-lib");
 var utils = apglib.utils;
-var style = utils.styleNames;
+var style = apglib.style;
 var MODE_HEX = 16;
 var MODE_DEC = 10;
 var MODE_ASCII = 8;
@@ -3173,7 +4871,7 @@ var sResultToText = function(result) {
 var sResultToHtml = function(result) {
   var html = "";
   var caption = "result:";
-  html += '<table class="' + style.CLASS_LEFT_TABLE + '">\n';
+  html += '<table class="' + style.CLASS_STATE + '">\n';
   html += '<caption>' + caption + '</caption>\n';
   html += '<tr>';
   html += '<th>item</th><th>value</th><th>phrase</th>';
@@ -3315,7 +5013,7 @@ var sLastMatchToText = function(exp) {
 var sLastMatchToHtml = function(exp) {
   var html = "";
   var caption = "last match:";
-  html += '<table class="' + style.CLASS_LEFT_TABLE + '">\n';
+  html += '<table class="' + style.CLASS_STATE + '">\n';
   html += '<caption>' + caption + '</caption>\n';
   html += '<tr>';
   html += '<th>item</th><th>value</th>';
@@ -3549,7 +5247,7 @@ var uResultToHtml = function(result, mode) {
   var html = "";
   var caption = "result:";
   caption += "(" + modeToText(mode) + ")";
-  html += '<table class="' + style.CLASS_LEFT_TABLE + '">\n';
+  html += '<table class="' + style.CLASS_STATE + '">\n';
   html += '<caption>' + caption + '</caption>\n';
   html += '<tr>';
   html += '<th>item</th><th>value</th><th>phrase</th>';
@@ -3690,7 +5388,7 @@ var uLastMatchToHtml = function(exp, mode) {
   var html = "";
   var caption = "last match:";
   caption += "(" + modeToText(mode) + ")";
-  html += '<table class="' + style.CLASS_LEFT_TABLE + '">\n';
+  html += '<table class="' + style.CLASS_STATE + '">\n';
   html += '<caption>' + caption + '</caption>\n';
   html += '<tr>';
   html += '<th>item</th><th>value</th>';
@@ -3860,7 +5558,7 @@ module.exports = {
   }
 }
 
-},{"apg-lib":18}],14:[function(require,module,exports){
+},{"apg-lib":21}],16:[function(require,module,exports){
 // This module parses an input SABNF grammar string into a grammar object.
 // Errors are reported as an array of error message strings.
 // To be called only by the `apg-exp` contructor.
@@ -3886,13 +5584,7 @@ module.exports = function(input){
   while(true){
     /* verify the input string - preliminary analysis*/
     try{
-      grammarAnalysis.getString(input);
-    }catch(e){
-      result.error = errorName + e.msg;
-      break;
-    }
-    try{
-      grammarResult = grammarAnalysis.analyze();
+      grammarResult = grammarAnalysis.analyze(input);
     }catch(e){
       result.error = errorName + e.msg;
       break;
@@ -3954,7 +5646,7 @@ module.exports = function(input){
   }
   return result;
 }
-},{"apg":30}],15:[function(require,module,exports){
+},{"apg":34}],17:[function(require,module,exports){
 // This module implements the `split()` function.
 "use strict;"
 var thisFunction = "split.js: split: ";
@@ -4019,7 +5711,7 @@ exports.split = function(p, str, limit) {
   return splits;
 }
 
-},{"apg-lib":18}],16:[function(require,module,exports){
+},{"apg-lib":21}],18:[function(require,module,exports){
 // This module is used by the parser to build an [Abstract Syntax Tree](https://en.wikipedia.org/wiki/Abstract_syntax_tree) (AST).
 // The AST can be thought of as a subset of the full parse tree.
 // Each node of the AST holds the phrase that was matched at the corresponding, named parse tree node.
@@ -4265,7 +5957,7 @@ module.exports = function() {
   }
 }
 
-},{"./identifiers.js":19,"./utilities.js":23}],17:[function(require,module,exports){
+},{"./identifiers.js":22,"./utilities.js":27}],19:[function(require,module,exports){
 // This module acts as a "circular buffer". It is used to keep track
 // only the last N records in an array of records. If more than N records
 // are saved, each additional record overwrites the previously oldest record.
@@ -4282,8 +5974,7 @@ module.exports = function() {
   // *size* is `maxListSize`, the maximum number of records saved before overwriting begins.
   this.init = function(size) {
     if (typeof (size) !== "number" || size <= 0) {
-      throw new Error(thisFileName
-          + "init: circular buffer size must an integer > 0")
+      throw new Error(thisFileName + "init: circular buffer size must an integer > 0")
     }
     maxListSize = Math.ceil(size);
     itemIndex = -1;
@@ -4294,7 +5985,7 @@ module.exports = function() {
     itemIndex += 1;
     return (itemIndex + maxListSize) % maxListSize;
   };
-  // Returns `maxListSize` - the maximum number of records to keep in the buffer. 
+  // Returns `maxListSize` - the maximum number of records to keep in the buffer.
   this.maxSize = function() {
     return maxListSize;
   }
@@ -4324,23 +6015,34 @@ module.exports = function() {
     if (itemIndex === -1) {
       /* no records have been collected */
       return;
-    } else if (itemIndex < maxListSize) {
+    }
+    if (itemIndex < maxListSize) {
       /* fewer than maxListSize records have been collected - number of items = number of records */
       for (var i = 0; i <= itemIndex; i += 1) {
         fn(i, i);
       }
-    } else {
-      /* start with the oldest record saved and finish with the most recent record saved */
-      for (var i = itemIndex - maxListSize + 1; i <= itemIndex; i += 1) {
-        var listIndex = (i + maxListSize) % maxListSize;
-        fn(listIndex, i);
-      }
+      return;
+    }
+    /* start with the oldest record saved and finish with the most recent record saved */
+    for (var i = itemIndex - maxListSize + 1; i <= itemIndex; i += 1) {
+      var listIndex = (i + maxListSize) % maxListSize;
+      fn(listIndex, i);
     }
   }
 }
 
-},{}],18:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
+module.exports = function(){
+return '/* This file automatically generated by toless() and LESS. */\n.apg-mono {\n  font-family: monospace;\n}\n.apg-active {\n  font-weight: bold;\n  color: #000000;\n}\n.apg-match {\n  font-weight: bold;\n  color: #264BFF;\n}\n.apg-empty {\n  font-weight: bold;\n  color: #0fbd0f;\n}\n.apg-nomatch {\n  font-weight: bold;\n  color: #FF4000;\n}\n.apg-lh-match {\n  font-weight: bold;\n  color: #1A97BA;\n}\n.apg-lb-match {\n  font-weight: bold;\n  color: #5F1687;\n}\n.apg-remainder {\n  font-weight: bold;\n  color: #999999;\n}\n.apg-ctrl-char {\n  font-weight: bolder;\n  font-style: italic;\n  font-size: .6em;\n}\n.apg-line-end {\n  font-weight: bold;\n  color: #000000;\n}\n.apg-error {\n  font-weight: bold;\n  color: #FF4000;\n}\n.apg-phrase {\n  color: #000000;\n  background-color: #8caae6;\n}\n.apg-empty-phrase {\n  color: #0fbd0f;\n}\ntable.apg-state {\n  font-family: monospace;\n  margin-top: 5px;\n  font-size: 11px;\n  line-height: 130%;\n  text-align: left;\n  border: 1px solid black;\n  border-collapse: collapse;\n}\ntable.apg-state th,\ntable.apg-state td {\n  text-align: left;\n  border: 1px solid black;\n  border-collapse: collapse;\n}\ntable.apg-state th:nth-last-child(2),\ntable.apg-state td:nth-last-child(2) {\n  text-align: right;\n}\ntable.apg-state caption {\n  font-size: 125%;\n  line-height: 130%;\n  font-weight: bold;\n  text-align: left;\n}\ntable.apg-stats {\n  font-family: monospace;\n  margin-top: 5px;\n  font-size: 11px;\n  line-height: 130%;\n  text-align: right;\n  border: 1px solid black;\n  border-collapse: collapse;\n}\ntable.apg-stats th,\ntable.apg-stats td {\n  text-align: right;\n  border: 1px solid black;\n  border-collapse: collapse;\n}\ntable.apg-stats caption {\n  font-size: 125%;\n  line-height: 130%;\n  font-weight: bold;\n  text-align: left;\n}\ntable.apg-trace {\n  font-family: monospace;\n  margin-top: 5px;\n  font-size: 11px;\n  line-height: 130%;\n  text-align: right;\n  border: 1px solid black;\n  border-collapse: collapse;\n}\ntable.apg-trace caption {\n  font-size: 125%;\n  line-height: 130%;\n  font-weight: bold;\n  text-align: left;\n}\ntable.apg-trace th,\ntable.apg-trace td {\n  text-align: right;\n  border: 1px solid black;\n  border-collapse: collapse;\n}\ntable.apg-trace th:last-child,\ntable.apg-trace th:nth-last-child(2),\ntable.apg-trace td:last-child,\ntable.apg-trace td:nth-last-child(2) {\n  text-align: left;\n}\ntable.apg-grammar {\n  font-family: monospace;\n  margin-top: 5px;\n  font-size: 11px;\n  line-height: 130%;\n  text-align: right;\n  border: 1px solid black;\n  border-collapse: collapse;\n}\ntable.apg-grammar caption {\n  font-size: 125%;\n  line-height: 130%;\n  font-weight: bold;\n  text-align: left;\n}\ntable.apg-grammar th,\ntable.apg-grammar td {\n  text-align: right;\n  border: 1px solid black;\n  border-collapse: collapse;\n}\ntable.apg-grammar th:last-child,\ntable.apg-grammar td:last-child {\n  text-align: left;\n}\ntable.apg-rules {\n  font-family: monospace;\n  margin-top: 5px;\n  font-size: 11px;\n  line-height: 130%;\n  text-align: right;\n  border: 1px solid black;\n  border-collapse: collapse;\n}\ntable.apg-rules caption {\n  font-size: 125%;\n  line-height: 130%;\n  font-weight: bold;\n  text-align: left;\n}\ntable.apg-rules th,\ntable.apg-rules td {\n  text-align: right;\n  border: 1px solid black;\n  border-collapse: collapse;\n}\ntable.apg-rules a {\n  color: #003399 !important;\n}\ntable.apg-rules a:hover {\n  color: #8caae6 !important;\n}\ntable.apg-attrs {\n  font-family: monospace;\n  margin-top: 5px;\n  font-size: 11px;\n  line-height: 130%;\n  text-align: center;\n  border: 1px solid black;\n  border-collapse: collapse;\n}\ntable.apg-attrs caption {\n  font-size: 125%;\n  line-height: 130%;\n  font-weight: bold;\n  text-align: left;\n}\ntable.apg-attrs th,\ntable.apg-attrs td {\n  text-align: center;\n  border: 1px solid black;\n  border-collapse: collapse;\n}\ntable.apg-attrs th:nth-child(1),\ntable.apg-attrs th:nth-child(2),\ntable.apg-attrs th:nth-child(3) {\n  text-align: right;\n}\ntable.apg-attrs td:nth-child(1),\ntable.apg-attrs td:nth-child(2),\ntable.apg-attrs td:nth-child(3) {\n  text-align: right;\n}\ntable.apg-attrs a {\n  color: #003399 !important;\n}\ntable.apg-attrs a:hover {\n  color: #8caae6 !important;\n}\n';
+}
+
+},{}],21:[function(require,module,exports){
 // This module serves only to export all other objects and object constructors with a single `require("apg-lib")` statement.
+// For example, to create a new parser in your program,
+//````
+// var apglib = require("apg-lib");
+// var my-parser = new apglib.parser();
+//````
 /*
 * COPYRIGHT: Copyright (c) 2016 Lowell D. Thomas, all rights reserved
 *   LICENSE: BSD-3-Clause
@@ -4356,8 +6058,10 @@ exports.parser = require("./parser.js");
 exports.stats = require("./stats.js");
 exports.trace = require("./trace.js");
 exports.utils = require("./utilities.js");
+exports.emitcss = require("./emitcss.js");
+exports.style = require("./style.js");
 
-},{"./ast.js":16,"./circular-buffer.js":17,"./identifiers.js":19,"./parser.js":20,"./stats.js":21,"./trace.js":22,"./utilities.js":23}],19:[function(require,module,exports){
+},{"./ast.js":18,"./circular-buffer.js":19,"./emitcss.js":20,"./identifiers.js":22,"./parser.js":23,"./stats.js":24,"./style.js":25,"./trace.js":26,"./utilities.js":27}],22:[function(require,module,exports){
 // This module exposes a list of named identifiers, shared across the parser generator
 // and the parsers that are generated.
 "use strict";
@@ -4434,7 +6138,7 @@ module.exports = {
   BKR_MODE_CS : 603,
   BKR_MODE_CI : 604
 }
-},{}],20:[function(require,module,exports){
+},{}],23:[function(require,module,exports){
 // This is the primary object of `apg-lib`. Calling its `parse()` member function 
 // walks the parse tree of opcodes, matching phrases from the input string as it goes.
 // The working code for all of the operators, `ALT`, `CAT`, etc. is in this module.
@@ -4451,6 +6155,7 @@ module.exports = function() {
   var _this = this;
   var id = require("./identifiers.js");
   var utils = require("./utilities.js");
+  var converter = require("apg-conv");
   this.ast = null;
   this.stats = null;
   this.trace = null;
@@ -4701,7 +6406,7 @@ module.exports = function() {
   /* (the grammar object generated previously by apg) */
   var initializeGrammar = function(grammar) {
     var functionName = thisFileName + "initializeGrammar(): ";
-    if (grammar === undefined || grammar === null) {
+    if (!grammar) {
       throw new Error(functionName + "grammar object undefined");
     }
     if (grammar.grammarObject !== "grammarObject") {
@@ -4798,12 +6503,12 @@ module.exports = function() {
       list.push(udts[i].lower);
     }
     for ( var index in _this.callbacks) {
-      i = list.indexOf(index);
+      i = list.indexOf(index.toLowerCase());
       if (i < 0) {
         throw new Error(functionName + "syntax callback '" + index + "' not a rule or udt name");
       }
       func = _this.callbacks[index];
-      if (func === false) {
+      if (!func) {
         func = null;
       }
       if (typeof (func) === "function" || func === null) {
@@ -4813,7 +6518,7 @@ module.exports = function() {
           udtCallbacks[i - rules.length] = func;
         }
       } else {
-        throw new Error(functionName + "syntax callback[" + index + "] must be function reference or 'false'");
+        throw new Error(functionName + "syntax callback[" + index + "] must be function reference or 'false' (false/null/undefined/etc.)");
       }
     }
     /* make sure all udts have been defined - the parser can't work without them */
@@ -5883,7 +7588,7 @@ module.exports = function() {
   };
 }
 
-},{"./identifiers.js":19,"./utilities.js":23}],21:[function(require,module,exports){
+},{"./identifiers.js":22,"./utilities.js":27,"apg-conv":6}],24:[function(require,module,exports){
 // This module is the constructor for the statistics gathering object.
 // The statistics are nothing more than keeping a count of the 
 // number of times each node in the parse tree is traversed.
@@ -5896,7 +7601,7 @@ module.exports = function() {
   var thisFileName = "stats.js: ";
   var id = require("./identifiers.js");
   var utils = require("./utilities");
-  var style = utils.styleNames;
+  var style = require("./style.js");
   var rules = [];
   var udts = [];
   var stats = [];
@@ -5959,6 +7664,8 @@ module.exports = function() {
     stats[id.BKR] = new emptyStat();
     stats[id.BKA] = new emptyStat();
     stats[id.BKN] = new emptyStat();
+    stats[id.ABG] = new emptyStat();
+    stats[id.AEN] = new emptyStat();
     ruleStats.length = 0;
     for (var i = 0; i < rules.length; i += 1) {
       ruleStats.push({
@@ -6031,6 +7738,8 @@ module.exports = function() {
     html += displayRow("BKR", stats[id.BKR]);
     html += displayRow("BKA", stats[id.BKA]);
     html += displayRow("BKN", stats[id.BKN]);
+    html += displayRow("ABG", stats[id.ABG]);
+    html += displayRow("AEN", stats[id.AEN]);
     html += displayRow("totals", totals);
     return html;
   }
@@ -6103,7 +7812,7 @@ module.exports = function() {
   this.toHtml = function(type, caption) {
     var display = displayOpsOnly;
     var html = "";
-    html += '<table class="'+style.CLASS_RIGHT_TABLE+'">\n';
+    html += '<table class="'+style.CLASS_STATS+'">\n';
     if (typeof (caption) === "string") {
       html += '<caption>' + caption + '</caption>\n';
     }
@@ -6154,7 +7863,7 @@ module.exports = function() {
       }
       break;
     }
-    html += "</table><br>\n";
+    html += "</table>\n";
     return html;
   }
   // Display the stats table in a complete HTML5 page.
@@ -6163,7 +7872,33 @@ module.exports = function() {
   }
 }
 
-},{"./identifiers.js":19,"./utilities":23}],22:[function(require,module,exports){
+},{"./identifiers.js":22,"./style.js":25,"./utilities":27}],25:[function(require,module,exports){
+module.exports = {
+
+  // Generated by apglib/style.js 
+  CLASS_MONOSPACE: 'apg-mono',
+  CLASS_ACTIVE: 'apg-active',
+  CLASS_EMPTY: 'apg-empty',
+  CLASS_MATCH: 'apg-match',
+  CLASS_NOMATCH: 'apg-nomatch',
+  CLASS_LOOKAHEAD: 'apg-lh-match',
+  CLASS_LOOKBEHIND: 'apg-lb-match',
+  CLASS_REMAINDER: 'apg-remainder',
+  CLASS_CTRLCHAR: 'apg-ctrl-char',
+  CLASS_LINEEND: 'apg-line-end',
+  CLASS_ERROR: 'apg-error',
+  CLASS_PHRASE: 'apg-phrase',
+  CLASS_EMPTYPHRASE: 'apg-empty-phrase',
+  CLASS_STATE: 'apg-state',
+  CLASS_STATS: 'apg-stats',
+  CLASS_TRACE: 'apg-trace',
+  CLASS_GRAMMAR: 'apg-grammar',
+  CLASS_RULES: 'apg-rules',
+  CLASS_RULESLINK: 'apg-rules-link',
+  CLASS_ATTRIBUTES: 'apg-attrs',
+}
+
+},{}],26:[function(require,module,exports){
 // This module provides a means of tracing the parser through the parse tree as it goes.
 // It is the primary debugging facility for debugging both the SABNF grammar syntax
 // and the input strings that are supposed to be valid grammar sentences.
@@ -6235,15 +7970,15 @@ module.exports = function() {
   var MAX_PHRASE = 80;
   var MAX_TLS = 5;
   var utils = require("./utilities.js");
-  var style = utils.styleNames;
+  var style = require("./style.js");
   var circular = new (require("./circular-buffer.js"))();
   var id = require("./identifiers.js");
-  var lines = [];
-  var maxLines = 5000;
-  var totalRecords = 0;
+  var records = [];
+  var maxRecords = 5000;
+  var lastRecord = -1;
   var filteredRecords = 0;
   var treeDepth = 0;
-  var lineStack = [];
+  var recordStack = [];
   var chars = null;
   var rules = null;
   var udts = null;
@@ -6252,8 +7987,8 @@ module.exports = function() {
   /* special trace table phrases */
   var PHRASE_END_CHAR = "&bull;";
   var PHRASE_CONTINUE_CHAR = "&hellip;";
-  var PHRASE_END = '<span class="' + style.CLASS_END + '">&bull;</span>';
-  var PHRASE_CONTINUE = '<span class="' + style.CLASS_END + '">&hellip;</span>';
+  var PHRASE_END = '<span class="' + style.CLASS_LINEEND + '">&bull;</span>';
+  var PHRASE_CONTINUE = '<span class="' + style.CLASS_LINEEND + '">&hellip;</span>';
   var PHRASE_EMPTY = '<span class="' + style.CLASS_EMPTY + '">&#120634;</span>';
   var PHRASE_NOMATCH = '<span class="' + style.CLASS_NOMATCH + '">&#120636;</span>';
   /* filter the non-RNM & non-UDT operators */
@@ -6273,66 +8008,61 @@ module.exports = function() {
       operatorFilter[id.ABG] = set;
       operatorFilter[id.AEN] = set;
     }
-    var all, items = 0;
+    var items = 0;
     for ( var name in that.filter.operators) {
       items += 1;
     }
     if (items === 0) {
       /* case 1: no operators specified: default: do not trace any operators */
       setOperators(false);
-    } else {
-      all = false;
-      for ( var name in that.filter.operators) {
-        var upper = name.toUpperCase();
-        if (upper === '<ALL>') {
-          /* case 2: <all> operators specified: trace all operators ignore all other operator commands */
-          setOperators(true);
-          all = true;
-          break;
-        }
-        if (upper === '<NONE>') {
-          /* case 3: <none> operators specified: trace NO operators ignore all other operator commands */
-          setOperators(false);
-          all = true;
-          break;
-        }
+      return;
+    }
+    for ( var name in that.filter.operators) {
+      var upper = name.toUpperCase();
+      if (upper === '<ALL>') {
+        /* case 2: <all> operators specified: trace all operators ignore all other operator commands */
+        setOperators(true);
+        return;
       }
-      if (all === false) {
+      if (upper === '<NONE>') {
+        /* case 3: <none> operators specified: trace NO operators ignore all other operator commands */
         setOperators(false);
-        for ( var name in that.filter.operators) {
-          var upper = name.toUpperCase();
-          /* case 4: one or more individual operators specified: trace specified operators only */
-          if (upper === 'ALT') {
-            operatorFilter[id.ALT] = true;
-          } else if (upper === 'CAT') {
-            operatorFilter[id.CAT] = true;
-          } else if (upper === 'REP') {
-            operatorFilter[id.REP] = true;
-          } else if (upper === 'AND') {
-            operatorFilter[id.AND] = true;
-          } else if (upper === 'NOT') {
-            operatorFilter[id.NOT] = true;
-          } else if (upper === 'TLS') {
-            operatorFilter[id.TLS] = true;
-          } else if (upper === 'TBS') {
-            operatorFilter[id.TBS] = true;
-          } else if (upper === 'TRG') {
-            operatorFilter[id.TRG] = true;
-          } else if (upper === 'BKR') {
-            operatorFilter[id.BKR] = true;
-          } else if (upper === 'BKA') {
-            operatorFilter[id.BKA] = true;
-          } else if (upper === 'BKN') {
-            operatorFilter[id.BKN] = true;
-          } else if (upper === 'ABG') {
-            operatorFilter[id.ABG] = true;
-          } else if (upper === 'AEN') {
-            operatorFilter[id.AEN] = true;
-          } else {
-            throw new Error(thisFileName + "initOpratorFilter: '" + name + "' not a valid operator name."
-                + " Must be <all>, <none>, alt, cat, rep, tls, tbs, trg, and, not, bkr, bka or bkn");
-          }
-        }
+        return;
+      }
+    }
+    setOperators(false);
+    for ( var name in that.filter.operators) {
+      var upper = name.toUpperCase();
+      /* case 4: one or more individual operators specified: trace 'true' operators only */
+      if (upper === 'ALT') {
+        operatorFilter[id.ALT] = (that.filter.operators[name] === true) ? true: false;
+      } else if (upper === 'CAT') {
+        operatorFilter[id.CAT] = (that.filter.operators[name] === true) ? true: false;;
+      } else if (upper === 'REP') {
+        operatorFilter[id.REP] = (that.filter.operators[name] === true) ? true: false;;
+      } else if (upper === 'AND') {
+        operatorFilter[id.AND] = (that.filter.operators[name] === true) ? true: false;;
+      } else if (upper === 'NOT') {
+        operatorFilter[id.NOT] = (that.filter.operators[name] === true) ? true: false;;
+      } else if (upper === 'TLS') {
+        operatorFilter[id.TLS] = (that.filter.operators[name] === true) ? true: false;;
+      } else if (upper === 'TBS') {
+        operatorFilter[id.TBS] = (that.filter.operators[name] === true) ? true: false;;
+      } else if (upper === 'TRG') {
+        operatorFilter[id.TRG] = (that.filter.operators[name] === true) ? true: false;;
+      } else if (upper === 'BKR') {
+        operatorFilter[id.BKR] = (that.filter.operators[name] === true) ? true: false;;
+      } else if (upper === 'BKA') {
+        operatorFilter[id.BKA] = (that.filter.operators[name] === true) ? true: false;;
+      } else if (upper === 'BKN') {
+        operatorFilter[id.BKN] = (that.filter.operators[name] === true) ? true: false;;
+      } else if (upper === 'ABG') {
+        operatorFilter[id.ABG] = (that.filter.operators[name] === true) ? true: false;;
+      } else if (upper === 'AEN') {
+        operatorFilter[id.AEN] = (that.filter.operators[name] === true) ? true: false;;
+      } else {
+        throw new Error(thisFileName + "initOpratorFilter: '" + name + "' not a valid operator name."
+            + " Must be <all>, <none>, alt, cat, rep, tls, tbs, trg, and, not, bkr, bka or bkn");
       }
     }
   }
@@ -6347,7 +8077,7 @@ module.exports = function() {
         ruleFilter.push(set);
       }
     }
-    var all, items, i, list = [];
+    var items, i, list = [];
     for (i = 0; i < rules.length; i += 1) {
       list.push(rules[i].lower);
     }
@@ -6362,37 +8092,32 @@ module.exports = function() {
     if (items === 0) {
       /* case 1: default to all rules & udts */
       setRules(true);
-    } else {
-      all = false;
-      for ( var name in that.filter.rules) {
-        var lower = name.toLowerCase();
-        if (lower === '<all>') {
-          /* case 2: trace all rules ignore all other rule commands */
-          setRules(true);
-          all = true;
-          break;
-        }
-        if (lower === '<none>') {
-          /* case 3: trace no rules */
-          setRules(false);
-          all = true;
-          break;
-        }
+      return;
+    }
+    for ( var name in that.filter.rules) {
+      var lower = name.toLowerCase();
+      if (lower === '<all>') {
+        /* case 2: trace all rules ignore all other rule commands */
+        setRules(true);
+        return;
       }
-      if (all === false) {
-        /* case 4: trace only individually specified rules */
+      if (lower === '<none>') {
+        /* case 3: trace no rules */
         setRules(false);
-        for ( var name in that.filter.rules) {
-          var lower = name.toLowerCase();
-          i = list.indexOf(lower);
-          if (i < 0) {
-            throw new Error(thisFileName + "initRuleFilter: '" + name + "' not a valid rule or udt name");
-          }
-          ruleFilter[i] = true;
-        }
-        operatorFilter[id.RNM] = true;
-        operatorFilter[id.UDT] = true;
+        return;
       }
+    }
+    /* case 4: trace only individually specified rules */
+    setRules(false);
+    operatorFilter[id.RNM] = true;
+    operatorFilter[id.UDT] = true;
+    for ( var name in that.filter.rules) {
+      var lower = name.toLowerCase();
+      i = list.indexOf(lower);
+      if (i < 0) {
+        throw new Error(thisFileName + "initRuleFilter: '" + name + "' not a valid rule or udt name");
+      }
+      ruleFilter[i] = (that.filter.rules[name] === true) ? true: false;;
     }
   }
   /* used by other APG components to verify that they have a valid trace object */
@@ -6402,22 +8127,29 @@ module.exports = function() {
     rules : []
   }
   // Set the maximum number of records to keep (default = 5000).
-  // Each record number larger than `maxLines`
+  // Each record number larger than `maxRecords`
   // will result in deleting the previously oldest record.
-  this.setMaxRecords = function(max) {
+  this.setMaxRecords = function(max, last) {
     if (typeof (max) === "number" && max > 0) {
-      maxLines = Math.ceil(max);
+      maxRecords = Math.ceil(max);
+    }
+    if(typeof(last) === "number"){
+      lastRecord = Math.floor(last);
+      if(lastRecord < 0){
+        lastRecord = -1;
+      }else if(lastRecord < maxRecords){
+        lastRecord = maxRecords;
+      }
     }
   }
-  // Returns `maxLines` to the caller.
+  // Returns `maxRecords` to the caller.
   this.getMaxRecords = function() {
-    return maxLines;
+    return maxRecords;
   }
   /* Called only by the `parser.js` object. No verification of input. */
   this.init = function(rulesIn, udtsIn, charsIn) {
-    lines.length = 0;
-    lineStack.length = 0;
-    totalRecords = 0;
+    records.length = 0;
+    recordStack.length = 0;
     filteredRecords = 0;
     treeDepth = 0;
     chars = charsIn;
@@ -6425,10 +8157,10 @@ module.exports = function() {
     udts = udtsIn;
     initOperatorFilter();
     initRuleFilter();
-    circular.init(maxLines);
+    circular.init(maxRecords);
   };
   /* returns true if this records passes through the designated filter, false if the record is to be skipped */
-  var filter = function(op) {
+  var filterOps = function(op) {
     var ret = false;
     if (op.type === id.RNM) {
       if (operatorFilter[op.type] && ruleFilter[op.index]) {
@@ -6447,13 +8179,17 @@ module.exports = function() {
     }
     return ret;
   }
+  var filterRecords = function(record){
+    if((lastRecord === -1) || (record <= lastRecord)){
+      return true;
+    }
+    return false;
+  }
   /* Collect the "down" record. */
-  this.down = function(op, state, offset, length,
-      anchor, lookAround) {
-    totalRecords += 1;
-    if (filter(op)) {
-      lineStack.push(filteredRecords);
-      lines[circular.increment()] = {
+  this.down = function(op, state, offset, length, anchor, lookAround) {
+    if (filterRecords(filteredRecords) && filterOps(op)) {
+      recordStack.push(filteredRecords);
+      records[circular.increment()] = {
         dirUp : false,
         depth : treeDepth,
         thisLine : filteredRecords,
@@ -6470,18 +8206,16 @@ module.exports = function() {
     }
   };
   /* Collect the "up" record. */
-  this.up = function(op, state, offset, length,
-      anchor, lookAround) {
-    totalRecords += 1;
-    if (filter(op)) {
+  this.up = function(op, state, offset, length, anchor, lookAround) {
+    if (filterRecords(filteredRecords) && filterOps(op)) {
       var thisLine = filteredRecords;
-      var thatLine = lineStack.pop();
+      var thatLine = recordStack.pop();
       var thatRecord = circular.getListIndex(thatLine);
       if (thatRecord !== -1) {
-        lines[thatRecord].thatLine = thisLine;
+        records[thatRecord].thatLine = thisLine;
       }
       treeDepth -= 1;
-      lines[circular.increment()] = {
+      records[circular.increment()] = {
         dirUp : true,
         depth : treeDepth,
         thisLine : thisLine,
@@ -6549,10 +8283,8 @@ module.exports = function() {
     }
     var title = "trace";
     var header = '';
-    header += '<h1>JavaScript APG Trace</h1>\n';
-    header += '<h3>&nbsp;&nbsp;&nbsp;&nbsp;display mode: ' + modeName + '</h3>\n';
-    header += '<h5>&nbsp;&nbsp;&nbsp;&nbsp;' + new Date() + '</h5>\n';
-    header += '<table class="'+style.CLASS_LAST2_LEFT_TABLE+'">\n';
+    header += '<p>display mode: ' + modeName + '</p>\n';
+    header += '<table class="'+style.CLASS_TRACE+'">\n';
     if (typeof (caption) === "string") {
       header += '<caption>' + caption + '</caption>';
     }
@@ -6578,13 +8310,13 @@ module.exports = function() {
     footer += 'phrase&nbsp;&nbsp;&nbsp;-&nbsp;up to ' + MAX_PHRASE + ' characters of the phrase being matched<br>\n';
     footer += '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-&nbsp;<span class="' + style.CLASS_MATCH
     + '">matched characters</span><br>\n';
-    footer += '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-&nbsp;<span class="' + style.CLASS_LH_MATCH
+    footer += '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-&nbsp;<span class="' + style.CLASS_LOOKAHEAD
     + '">matched characters in look ahead mode</span><br>\n';
-    footer += '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-&nbsp;<span class="' + style.CLASS_LB_MATCH
+    footer += '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-&nbsp;<span class="' + style.CLASS_LOOKBEHIND
     + '">matched characters in look behind mode</span><br>\n';
     footer += '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-&nbsp;<span class="' + style.CLASS_REMAINDER
         + '">remainder characters(not yet examined by parser)</span><br>\n';
-    footer += '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-&nbsp;<span class="' + style.CLASS_CTRL
+    footer += '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-&nbsp;<span class="' + style.CLASS_CTRLCHAR
         + '">control characters, TAB, LF, CR, etc. (ASCII mode only)</span><br>\n';
     footer += '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-&nbsp;' + PHRASE_EMPTY + ' empty string<br>\n';
     footer += '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-&nbsp;' + PHRASE_END + ' end of input string<br>\n';
@@ -6623,7 +8355,7 @@ module.exports = function() {
     html += '<tr><th>(a)</th><th>(b)</th><th>(c)</th><th>(d)</th><th>(e)</th><th>(f)</th>';
     html += '<th>operator</th><th>phrase</th></tr>\n';
     circular.forEach(function(lineIndex, index) {
-      var line = lines[lineIndex];
+      var line = records[lineIndex];
       thisLine = line.thisLine;
       thatLine = (line.thatLine !== undefined) ? line.thatLine : '--';
       lookAhead = false;
@@ -6678,9 +8410,9 @@ module.exports = function() {
       html += '<td>';
       html += that.indent(line.depth);
       if (lookAhead) {
-        html += '<span class="' + style.CLASS_LH_MATCH + '">';
+        html += '<span class="' + style.CLASS_LOOKAHEAD + '">';
       }else  if (lookBehind) {
-        html += '<span class="' + style.CLASS_LB_MATCH + '">';
+        html += '<span class="' + style.CLASS_LOOKBEHIND + '">';
       }
       html += utils.opcodeToString(line.opcode.type);
       if (line.opcode.type === id.RNM) {
@@ -6870,7 +8602,7 @@ module.exports = function() {
     var html = '';
     var beg1, len1, beg2, len2;
     var lastchar = PHRASE_END;
-    var spanBehind = '<span class="' + style.CLASS_LB_MATCH + '">';
+    var spanBehind = '<span class="' + style.CLASS_LOOKBEHIND + '">';
     var spanRemainder = '<span class="' + style.CLASS_REMAINDER + '">'
     var spanend = '</span>';
     var prev = false;
@@ -6910,7 +8642,7 @@ module.exports = function() {
   }
   /* display phrases matched in look-ahead mode */
   var displayAhead = function(mode, chars, state, index, length) {
-    var spanAhead = '<span class="' + style.CLASS_LH_MATCH + '">';
+    var spanAhead = '<span class="' + style.CLASS_LOOKAHEAD + '">';
     return displayForward(mode, chars, state, index, length, spanAhead);
   }
   /* display phrases matched in normal parsing mode */
@@ -6992,12 +8724,14 @@ module.exports = function() {
   }
 }
 
-},{"./circular-buffer.js":17,"./identifiers.js":19,"./utilities.js":23}],23:[function(require,module,exports){
+},{"./circular-buffer.js":19,"./identifiers.js":22,"./style.js":25,"./utilities.js":27}],27:[function(require,module,exports){
 // This module exports a variety of utility functions that support 
 // [`apg`](https://github.com/ldthomas/apg-js2), [`apg-lib`](https://github.com/ldthomas/apg-js2-lib)
 // and the generated parser applications.
 "use strict";
 var thisFileName = "utilities.js: ";
+var style = require('./style.js');
+var converter = require("apg-conv");
 var _this = this;
 /* translate (implied) phrase beginning character and length to actual first and last character indexes */
 /* used by multiple phrase handling functions */
@@ -7035,147 +8769,6 @@ var getBounds = function(length, beg, len) {
     end : end
   };
 }
-// Define a standard set of colors and classes for HTML display of results.
-var style = {
-  /* colors */
-  COLOR_ACTIVE : "#000000",
-  COLOR_MATCH : "#264BFF",
-  COLOR_EMPTY : "#0fbd0f",
-  COLOR_NOMATCH : "#FF4000",
-  COLOR_LH_MATCH : "#1A97BA",
-  COLOR_LB_MATCH : "#5F1687",
-  COLOR_LH_NOMATCH : "#FF8000",
-  COLOR_LB_NOMATCH : "#e6ac00",
-  COLOR_END : "#000000",
-  COLOR_CTRL : "#000000",
-  COLOR_REMAINDER : "#999999",
-  COLOR_TEXT : "#000000",
-  COLOR_BACKGROUND : "#FFFFFF",
-  COLOR_BORDER : "#000000",
-  /* color classes */
-  CLASS_ACTIVE : "apg-active",
-  CLASS_MATCH : "apg-match",
-  CLASS_NOMATCH : "apg-nomatch",
-  CLASS_EMPTY : "apg-empty",
-  CLASS_LH_MATCH : "apg-lh-match",
-  CLASS_LB_MATCH : "apg-lb-match",
-  CLASS_REMAINDER : "apg-remainder",
-  CLASS_CTRL : "apg-ctrl-char",
-  CLASS_END : "apg-line-end",
-  /* table classes */
-  CLASS_LEFT_TABLE : "apg-left-table",
-  CLASS_RIGHT_TABLE : "apg-right-table",
-  CLASS_LAST_LEFT_TABLE : "apg-last-left-table",
-  CLASS_LAST2_LEFT_TABLE : "apg-last2-left-table",
-  /* text classes */
-  CLASS_MONOSPACE : "apg-mono"
-}
-exports.styleNames = style;
-var classes = function(){
-  var html = "";
-  html += '.' + style.CLASS_MONOSPACE + '{font-family: monospace;}\n';
-  html += '.' + style.CLASS_ACTIVE + '{font-weight: bold; color: ' + style.COLOR_TEXT + ';}\n';
-  html += '.' + style.CLASS_MATCH + '{font-weight: bold; color: ' + style.COLOR_MATCH + ';}\n';
-  html += '.' + style.CLASS_EMPTY + '{font-weight: bold; color: ' + style.COLOR_EMPTY + ';}\n';
-  html += '.' + style.CLASS_NOMATCH + '{font-weight: bold; color: ' + style.COLOR_NOMATCH + ';}\n';
-  html += '.' + style.CLASS_LH_MATCH + '{font-weight: bold; color: ' + style.COLOR_LH_MATCH + ';}\n';
-  html += '.' + style.CLASS_LB_MATCH + '{font-weight: bold; color: ' + style.COLOR_LB_MATCH + ';}\n';
-  html += '.' + style.CLASS_REMAINDER + '{font-weight: bold; color: ' + style.COLOR_REMAINDER + ';}\n';
-  html += '.' + style.CLASS_CTRL + '{font-weight: bolder; font-style: italic; font-size: .6em;}\n';
-  html += '.' + style.CLASS_END + '{font-weight: bold; color: ' + style.COLOR_END + ';}\n';
-  return html;
-}
-var leftTable = function(){
-  var html = "";
-  html += "." + style.CLASS_LEFT_TABLE + "{font-family:monospace;}\n";
-  html += "." + style.CLASS_LEFT_TABLE + ",\n";
-  html += "." + style.CLASS_LEFT_TABLE + " th,\n";
-  html += "." + style.CLASS_LEFT_TABLE + " td{text-align:left;border:1px solid black;border-collapse:collapse;}\n";
-  html += "." + style.CLASS_LEFT_TABLE + " caption";
-  html += "{font-size:125%;font-weight:bold;text-align:left;}\n";
-  return html;
-}
-var rightTable = function(){
-  var html = "";
-  html += "." + style.CLASS_RIGHT_TABLE + "{font-family:monospace;}\n";
-  html += "." + style.CLASS_RIGHT_TABLE + ",\n";
-  html += "." + style.CLASS_RIGHT_TABLE + " th,\n";
-  html += "." + style.CLASS_RIGHT_TABLE + " td{text-align:right;border:1px solid black;border-collapse:collapse;}\n";
-  html += "." + style.CLASS_RIGHT_TABLE + " caption";
-  html += "{font-size:125%;font-weight:bold;text-align:left;}\n";
-  return html;
-}
-var lastLeft = function(){
-  var html = "";
-  html += "." + style.CLASS_LAST_LEFT_TABLE + "{font-family:monospace;}\n";
-  html += "." + style.CLASS_LAST_LEFT_TABLE + ",\n";
-  html += "." + style.CLASS_LAST_LEFT_TABLE + " th,\n";
-  html += "." + style.CLASS_LAST_LEFT_TABLE + " td{text-align:right;border:1px solid black;border-collapse:collapse;}\n";
-  html += "." + style.CLASS_LAST_LEFT_TABLE + " th:last-child{text-align:left;}\n";
-  html += "." + style.CLASS_LAST_LEFT_TABLE + " td:last-child{text-align:left;}\n";
-  html += "." + style.CLASS_LAST_LEFT_TABLE + " caption";
-  html += "{font-size:125%;font-weight:bold;text-align:left;}\n";
-  return html;
-}
-var last2Left = function(){
-  var html = "";
-  html += "." + style.CLASS_LAST2_LEFT_TABLE + "{font-family:monospace;}\n";
-  html += "." + style.CLASS_LAST2_LEFT_TABLE + ",\n";
-  html += "." + style.CLASS_LAST2_LEFT_TABLE + " th,\n";
-  html += "." + style.CLASS_LAST2_LEFT_TABLE + " td{text-align:right;border:1px solid black;border-collapse:collapse;}\n";
-  html += '.' + style.CLASS_LAST2_LEFT_TABLE + ' th:last-child{text-align:left;}\n';
-  html += '.' + style.CLASS_LAST2_LEFT_TABLE + ' th:nth-last-child(2){text-align:left;}\n';
-  html += '.' + style.CLASS_LAST2_LEFT_TABLE + ' td:last-child{text-align:left;}\n';
-  html += '.' + style.CLASS_LAST2_LEFT_TABLE + ' td:nth-last-child(2){text-align:left;}\n';
-  html += "." + style.CLASS_LAST2_LEFT_TABLE + " caption";
-  html += "{font-size:125%;font-weight:bold;text-align:left;}\n";
-  return html;
-}
-// Returns the content of a css file that can be used for apg & apg-exp HTML output.
-exports.css = function(){
-  var html = "";
-  html += classes();
-  html += leftTable();
-  html += rightTable();
-  html += lastLeft();
-  html += last2Left();
-  return html;
-}
-// Returns a "&lt;style>" block to define some APG standard styles in an HTML page.
-exports.styleClasses = function() {
-  var html = '<style>\n';
-  html += classes();
-  html += '</style>\n';
-  return html;
-}
-// Returns a table "&lt;style>" block for all columns left aligned
-exports.styleLeftTable = function() {
-  var html = '<style>\n';
-  html += leftTable();
-  html += '</style>\n';
-  return html;
-}
-// Returns a table "&lt;style>" block for all columns right aligned (0 left-aligned cols)
-exports.styleRightTable = function() {
-  var html = '<style>\n';
-  html += rightTable();
-  html += '</style>\n';
-  return html;
-}
-// Returns a table "&lt;style>" block for all but last columns right aligned (1 left-aligned col)
-exports.styleLastLeftTable = function() {
-  var html = '<style>\n';
-  html += lastLeft();
-  html += '</style>\n';
-  return html;
-}
-// Returns a table "&lt;style>" block for all but last 2 columns right aligned (2 left-aligned cols)
-exports.styleLast2LeftTable = function() {
-  var html = '<style>\n';
-  html += last2Left();
-  html += '</style>\n';
-  return html;
-}
 // Generates a complete, minimal HTML5 page, inserting the user's HTML text on the page.
 // - *html* - the page text in HTML format
 // - *title* - the HTML page `<title>` - defaults to `htmlToPage`.
@@ -7193,11 +8786,7 @@ exports.htmlToPage = function(html, title) {
   page += '<head>\n';
   page += '<meta charset="utf-8">\n';
   page += '<title>' + title + '</title>\n';
-  page += exports.styleClasses();
-  page += exports.styleLeftTable();
-  page += exports.styleRightTable();
-  page += exports.styleLastLeftTable();
-  page += exports.styleLast2LeftTable();
+  page += '<link rel="stylesheet" href="apglib.css">\n';
   page += '</head>\n<body>\n';
   page += '<p>' + new Date() + '</p>\n';
   page += html;
@@ -7243,7 +8832,7 @@ exports.parserResultToHtml = function(result, caption) {
     state = '<span class="' + style.CLASS_NOMATCH + '">unrecognized</span>';
   }
   var html = '';
-  html += '<p><table class="' + style.CLASS_LEFT_TABLE + '">\n';
+  html += '<table class="' + style.CLASS_STATE + '">\n';
   if (cap) {
     html += '<caption>' + cap + '</caption>\n';
   }
@@ -7268,39 +8857,19 @@ exports.parserResultToHtml = function(result, caption) {
   html += '<tr><td>sub-string begin</td><td>' + result.subBegin + '</td><td>sub-string first character index</td></tr>\n';
   html += '<tr><td>sub-string end</td><td>' + result.subEnd + '</td><td>sub-string end-of-string index</td></tr>\n';
   html += '<tr><td>sub-string length</td><td>' + result.subLength + '</td><td>sub-string length</td></tr>\n';
-  html += '</table></p>\n';
+  html += '</table>\n';
   return html;
 }
 // Translates a sub-array of integer character codes into a string.
 // Very useful in callback functions to translate the matched phrases into strings.
 exports.charsToString = function(chars, phraseIndex, phraseLength) {
-  var string = '';
-  if (Array.isArray(chars)) {
-    var charIndex = (typeof (phraseIndex) === 'number') ? phraseIndex : 0;
-    var charLength = (typeof (phraseLength) === 'number') ? phraseLength : chars.length;
-    if (charLength > chars.length) {
-      charLength = chars.length;
-    }
-    var charEnd = charIndex + charLength;
-    for (var i = charIndex; i < charEnd; i += 1) {
-      if (chars[i]) {
-        string += String.fromCharCode(chars[i]);
-      }
-    }
-  }
-  return string;
+  var ar = chars.slice(phraseIndex, phraseIndex+phraseLength);
+  var buf = converter.encode("UTF16LE", ar);
+  return buf.toString("utf16le");
 }
 // Translates a string into an array of integer character codes.
 exports.stringToChars = function(string) {
-  var chars = [];
-  if (typeof (string) === 'string') {
-    var charIndex = 0;
-    while (charIndex < string.length) {
-      chars[charIndex] = string.charCodeAt(charIndex);
-      charIndex += 1;
-    }
-  }
-  return chars;
+  return converter.decode("STRING", string);
 }
 // Translates an opcode identifier into a human-readable string.
 exports.opcodeToString = function(type) {
@@ -7470,10 +9039,10 @@ exports.charsToAsciiHtml = function(chars, beg, len) {
     char = chars[i];
     if (char < 32 || char === 127) {
       /* control characters */
-      html += '<span class="' + style.CLASS_CTRL + '">' + _this.asciiChars[char] + '</span>';
+      html += '<span class="' + style.CLASS_CTRLCHAR + '">' + _this.asciiChars[char] + '</span>';
     } else if (char > 127) {
       /* non-ASCII */
-      html += '<span class="' + style.CLASS_CTRL + '">' + 'U+' + _this.charToHex(char) + '</span>';
+      html += '<span class="' + style.CLASS_CTRLCHAR + '">' + 'U+' + _this.charToHex(char) + '</span>';
     } else {
       /* printing ASCII, 32 <= char <= 126 */
       html += _this.asciiChars[char];
@@ -7483,10 +9052,11 @@ exports.charsToAsciiHtml = function(chars, beg, len) {
 }
 //Translates a JavaScript string to HTML display format.
 exports.stringToAsciiHtml = function(str){
-  var chars = this.stringToChars(str);
+  var chars = converter.decode("STRING", str);
+//  var chars = this.stringToChars(str);
   return this.charsToAsciiHtml(chars);
 }
-},{"./identifiers.js":19}],24:[function(require,module,exports){
+},{"./identifiers.js":22,"./style.js":25,"apg-conv":6}],28:[function(require,module,exports){
 // Generated by JavaScript APG, Version 2.0 [`apg-js2`](https://github.com/ldthomas/apg-js2)
 module.exports = function(){
 "use strict";
@@ -7495,7 +9065,7 @@ module.exports = function(){
   //      rules = 95
   //       udts = 0
   //    opcodes = 372
-  //        ABNF original opcodes
+  //        ---   ABNF original opcodes
   //        ALT = 43
   //        CAT = 48
   //        REP = 34
@@ -7503,7 +9073,7 @@ module.exports = function(){
   //        TLS = 2
   //        TBS = 61
   //        TRG = 35
-  //        SABNF superset opcodes
+  //        ---   SABNF superset opcodes
   //        UDT = 0
   //        AND = 0
   //        NOT = 0
@@ -7514,104 +9084,6 @@ module.exports = function(){
   //        AEN = 0
   // characters = [9 - 126]
   //```
-  /* CALLBACK LIST PROTOTYPE (true, false or function reference) */
-  this.callbacks = [];
-  this.callbacks['abgop'] = false;
-  this.callbacks['aenop'] = false;
-  this.callbacks['alphanum'] = false;
-  this.callbacks['alternation'] = false;
-  this.callbacks['altop'] = false;
-  this.callbacks['andop'] = false;
-  this.callbacks['basicelement'] = false;
-  this.callbacks['basicelementerr'] = false;
-  this.callbacks['bin'] = false;
-  this.callbacks['bkaop'] = false;
-  this.callbacks['bknop'] = false;
-  this.callbacks['bkr-name'] = false;
-  this.callbacks['bkrmodifier'] = false;
-  this.callbacks['bkrop'] = false;
-  this.callbacks['blankline'] = false;
-  this.callbacks['bmax'] = false;
-  this.callbacks['bmin'] = false;
-  this.callbacks['bnum'] = false;
-  this.callbacks['bstring'] = false;
-  this.callbacks['catop'] = false;
-  this.callbacks['ci'] = false;
-  this.callbacks['clsclose'] = false;
-  this.callbacks['clsop'] = false;
-  this.callbacks['clsopen'] = false;
-  this.callbacks['clsstring'] = false;
-  this.callbacks['comment'] = false;
-  this.callbacks['concatenation'] = false;
-  this.callbacks['cs'] = false;
-  this.callbacks['dec'] = false;
-  this.callbacks['defined'] = false;
-  this.callbacks['definedas'] = false;
-  this.callbacks['definedaserror'] = false;
-  this.callbacks['definedastest'] = false;
-  this.callbacks['dmax'] = false;
-  this.callbacks['dmin'] = false;
-  this.callbacks['dnum'] = false;
-  this.callbacks['dstring'] = false;
-  this.callbacks['ename'] = false;
-  this.callbacks['file'] = false;
-  this.callbacks['group'] = false;
-  this.callbacks['groupclose'] = false;
-  this.callbacks['grouperror'] = false;
-  this.callbacks['groupopen'] = false;
-  this.callbacks['hex'] = false;
-  this.callbacks['incalt'] = false;
-  this.callbacks['linecontinue'] = false;
-  this.callbacks['lineend'] = false;
-  this.callbacks['lineenderror'] = false;
-  this.callbacks['modifier'] = false;
-  this.callbacks['notop'] = false;
-  this.callbacks['option'] = false;
-  this.callbacks['optionclose'] = false;
-  this.callbacks['optionerror'] = false;
-  this.callbacks['optionopen'] = false;
-  this.callbacks['owsp'] = false;
-  this.callbacks['pm'] = false;
-  this.callbacks['predicate'] = false;
-  this.callbacks['prosval'] = false;
-  this.callbacks['prosvalclose'] = false;
-  this.callbacks['prosvalopen'] = false;
-  this.callbacks['prosvalstring'] = false;
-  this.callbacks['rep-max'] = false;
-  this.callbacks['rep-min'] = false;
-  this.callbacks['rep-min-max'] = false;
-  this.callbacks['rep-num'] = false;
-  this.callbacks['repetition'] = false;
-  this.callbacks['repop'] = false;
-  this.callbacks['rname'] = false;
-  this.callbacks['rnmop'] = false;
-  this.callbacks['rule'] = false;
-  this.callbacks['ruleerror'] = false;
-  this.callbacks['rulelookup'] = false;
-  this.callbacks['rulename'] = false;
-  this.callbacks['rulenameerror'] = false;
-  this.callbacks['rulenametest'] = false;
-  this.callbacks['space'] = false;
-  this.callbacks['starop'] = false;
-  this.callbacks['stringtab'] = false;
-  this.callbacks['tbsop'] = false;
-  this.callbacks['tlscase'] = false;
-  this.callbacks['tlsclose'] = false;
-  this.callbacks['tlsop'] = false;
-  this.callbacks['tlsopen'] = false;
-  this.callbacks['tlsstring'] = false;
-  this.callbacks['trgop'] = false;
-  this.callbacks['udt-empty'] = false;
-  this.callbacks['udt-non-empty'] = false;
-  this.callbacks['udtop'] = false;
-  this.callbacks['um'] = false;
-  this.callbacks['uname'] = false;
-  this.callbacks['wsp'] = false;
-  this.callbacks['xmax'] = false;
-  this.callbacks['xmin'] = false;
-  this.callbacks['xnum'] = false;
-  this.callbacks['xstring'] = false;
-
   /* OBJECT IDENTIFIER (for internal parser use) */
   this.grammarObject = 'grammarObject';
 
@@ -8552,20 +10024,17 @@ module.exports = function(){
   }
 }
 
-},{}],25:[function(require,module,exports){
+},{}],29:[function(require,module,exports){
 // This module converts an input SABNF grammar text file into a 
 // grammar object that can be used with [`apg-lib`](https://github.com/ldthomas/apg-js2-lib) in an application parser.
-// The parser that does this is based on the grammar `resources/abnf-for-sabnf-grammar.bnf`.
-// The seemingly paradoxical fact that this parser generator is a parser generated from the ABNF grammar
-// `resources/abnf-for-sabnf-grammar.bnf`
-// can lead to some circular arguments in the discussion and caution is required.
-// There are two grammars involved and we need to make a clear distinction:
-// - ABNF for SABNF (`resources/abnf-for-sabnf-grammar.bnf`) is the grammar that this parser is built from.
-// - the grammar the user wants a parser for is the input to this module.
+// **apg** is, in fact itself, an ABNF parser that generates and SABNF parser.
+// It is based on the grammar<br>
+//`abnf/abnf-for-sabnf-grammar.bnf`.<br>
+// In its syntax phase, **apg** analyzes the user's input SABNF grammar for correct syntax, generating an AST as it goes.
+// In its semantic phase, **apg** translates the AST to generate the parser for the input grammar.
 module.exports = function() {
   "use strict";
   var thisFileName = "abnf-for-sabnf-parser.js: ";
-  var fs = require("fs");
   var apglib = require("apg-lib");
   var id = apglib.ids;
   var utils = apglib.utils;
@@ -8709,8 +10178,10 @@ module.exports = function() {
     }
     return ret;
   }
-  // Generate a parser or grammar file to be used with the `apg-lib` `parser()` function.
-  this.generateJavaScript = function(rules, udts, fileName) {
+  // Generate a grammar constructor function.
+  // An object instantiated from this constructor is used with the `apg-lib` `parser()` function.
+  this.generateSource = function(rules, udts, name) {
+    var source = "";
     var i;
     var bkrname;
     var bkrlower;
@@ -8803,61 +10274,52 @@ module.exports = function() {
       });
       udtNames.sort();
     }
-    fileName += ".js";
     try {
-      var fd = fs.openSync(fileName, "w");
-      fs.writeSync(fd, "// Generated by JavaScript APG, Version 2.0 [`apg-js2`](https://github.com/ldthomas/apg-js2)\n");
-      fs.writeSync(fd, "module.exports = function(){\n");
-      fs.writeSync(fd, "\"use strict\";\n");
-      fs.writeSync(fd, "  //```\n");
-      fs.writeSync(fd, "  // SUMMARY\n");
-      fs.writeSync(fd, "  //      rules = " + rules.length + "\n");
-      fs.writeSync(fd, "  //       udts = " + udts.length + "\n");
-      fs.writeSync(fd, "  //    opcodes = " + opcodeCount + "\n");
-      fs.writeSync(fd, "  //        ABNF original opcodes\n");
-      fs.writeSync(fd, "  //        ALT = " + alt + "\n");
-      fs.writeSync(fd, "  //        CAT = " + cat + "\n");
-      fs.writeSync(fd, "  //        REP = " + rep + "\n");
-      fs.writeSync(fd, "  //        RNM = " + rnm + "\n");
-      fs.writeSync(fd, "  //        TLS = " + tls + "\n");
-      fs.writeSync(fd, "  //        TBS = " + tbs + "\n");
-      fs.writeSync(fd, "  //        TRG = " + trg + "\n");
-      fs.writeSync(fd, "  //        SABNF superset opcodes\n");
-      fs.writeSync(fd, "  //        UDT = " + udt + "\n");
-      fs.writeSync(fd, "  //        AND = " + and + "\n");
-      fs.writeSync(fd, "  //        NOT = " + not + "\n");
-      fs.writeSync(fd, "  //        BKA = " + bka + "\n");
-      fs.writeSync(fd, "  //        BKN = " + bkn + "\n");
-      fs.writeSync(fd, "  //        BKR = " + bkr + "\n");
-      fs.writeSync(fd, "  //        ABG = " + abg + "\n");
-      fs.writeSync(fd, "  //        AEN = " + aen + "\n");
-      fs.writeSync(fd, "  // characters = [");
+      var funcname = "module.exports";
+      if(name && typeof(name) === "string"){
+        funcname = "var " +name;
+      }
+      source += "// Generated by JavaScript APG, Version [`apg-js2`](https://github.com/ldthomas/apg-js2)\n";
+      source += funcname + " = function(){\n";
+      source += "\"use strict\";\n";
+      source += "  //```\n";
+      source += "  // SUMMARY\n";
+      source += "  //      rules = " + rules.length + "\n";
+      source += "  //       udts = " + udts.length + "\n";
+      source += "  //    opcodes = " + opcodeCount + "\n";
+      source += "  //        ---   ABNF original opcodes\n";
+      source += "  //        ALT = " + alt + "\n";
+      source += "  //        CAT = " + cat + "\n";
+      source += "  //        REP = " + rep + "\n";
+      source += "  //        RNM = " + rnm + "\n";
+      source += "  //        TLS = " + tls + "\n";
+      source += "  //        TBS = " + tbs + "\n";
+      source += "  //        TRG = " + trg + "\n";
+      source += "  //        ---   SABNF superset opcodes\n";
+      source += "  //        UDT = " + udt + "\n";
+      source += "  //        AND = " + and + "\n";
+      source += "  //        NOT = " + not + "\n";
+      source += "  //        BKA = " + bka + "\n";
+      source += "  //        BKN = " + bkn + "\n";
+      source += "  //        BKR = " + bkr + "\n";
+      source += "  //        ABG = " + abg + "\n";
+      source += "  //        AEN = " + aen + "\n";
+      source += "  // characters = [";
       if ((tls + tbs + trg) === 0) {
-        fs.writeSync(fd, " none defined ]");
+        source += " none defined ]";
       } else {
-        fs.writeSync(fd, charCodeMin + " - " + charCodeMax + "]");
+        source += charCodeMin + " - " + charCodeMax + "]";
       }
       if (udt > 0) {
-        fs.writeSync(fd, " + user defined");
+        source += " + user defined";
       }
-      fs.writeSync(fd, "\n");
-      fs.writeSync(fd, "  //```\n");
-      fs.writeSync(fd, "  /* CALLBACK LIST PROTOTYPE (true, false or function reference) */\n");
-      fs.writeSync(fd, "  this.callbacks = [];\n");
-      ruleNames.forEach(function(name) {
-        fs.writeSync(fd, "  this.callbacks['" + name + "'] = false;\n");
-      });
-      if (udts.length > 0) {
-        udtNames.forEach(function(name) {
-          fs.writeSync(fd, "  this.callbacks['" + name + "'] = false;\n");
-        });
-      }
-      fs.writeSync(fd, "\n");
-      fs.writeSync(fd, "  /* OBJECT IDENTIFIER (for internal parser use) */\n");
-      fs.writeSync(fd, "  this.grammarObject = 'grammarObject';\n");
-      fs.writeSync(fd, "\n");
-      fs.writeSync(fd, "  /* RULES */\n");
-      fs.writeSync(fd, "  this.rules = [];\n");
+      source += "\n";
+      source += "  //```\n";
+      source += "  /* OBJECT IDENTIFIER (for internal parser use) */\n";
+      source += "  this.grammarObject = 'grammarObject';\n";
+      source += "\n";
+      source += "  /* RULES */\n";
+      source += "  this.rules = [];\n";
       rules.forEach(function(rule, i) {
         var thisRule = "  this.rules[";
         thisRule += i;
@@ -8870,11 +10332,11 @@ module.exports = function() {
         thisRule += ", isBkr: ";
         thisRule += rule.isBkr;
         thisRule += "};\n";
-        fs.writeSync(fd, thisRule);
+        source += thisRule;
       });
-      fs.writeSync(fd, "\n");
-      fs.writeSync(fd, "  /* UDTS */\n");
-      fs.writeSync(fd, "  this.udts = [];\n");
+      source += "\n";
+      source += "  /* UDTS */\n";
+      source += "  this.udts = [];\n";
       if (udts.length > 0) {
         udts.forEach(function(udt, i) {
           var thisUdt = "  this.udts[";
@@ -8890,30 +10352,30 @@ module.exports = function() {
           thisUdt += ", isBkr: ";
           thisUdt += udt.isBkr;
           thisUdt += "};\n";
-          fs.writeSync(fd, thisUdt);
+          source += thisUdt;
         });
       }
-      fs.writeSync(fd, "\n");
-      fs.writeSync(fd, "  /* OPCODES */\n");
+      source += "\n";
+      source += "  /* OPCODES */\n";
       rules.forEach(function(rule, ruleIndex) {
         if (ruleIndex > 0) {
-          fs.writeSync(fd, "\n");
+          source += "\n";
         }
-        fs.writeSync(fd, "  /* " + rule.name + " */\n");
-        fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes = [];\n");
+        source += "  /* " + rule.name + " */\n";
+        source += "  this.rules[" + ruleIndex + "].opcodes = [];\n";
         rule.opcodes.forEach(function(op, opIndex) {
           switch (op.type) {
           case id.ALT:
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
-                + ", children: [" + op.children.toString() + "]};// ALT\n");
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
+                + ", children: [" + op.children.toString() + "]};// ALT\n";
             break;
           case id.CAT:
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
-                + ", children: [" + op.children.toString() + "]};// CAT\n");
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
+                + ", children: [" + op.children.toString() + "]};// CAT\n";
             break;
           case id.RNM:
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
-                + ", index: " + op.index + "};// RNM(" + rules[op.index].name + ")\n");
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
+                + ", index: " + op.index + "};// RNM(" + rules[op.index].name + ")\n";
             break;
           case id.BKR:
             if (op.index >= rules.length) {
@@ -8933,67 +10395,67 @@ module.exports = function() {
               prefix += "%p";
             }
             bkrname = prefix + bkrname;
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
                 + ", index: " + op.index + ", lower: '" + bkrlower + "'" + ", bkrCase: " + op.bkrCase + ", bkrMode: "
-                + op.bkrMode + "};// BKR(\\" + bkrname + ")\n");
+                + op.bkrMode + "};// BKR(\\" + bkrname + ")\n";
             break;
           case id.UDT:
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
-                + ", empty: " + op.empty + ", index: " + op.index + "};// UDT(" + udts[op.index].name + ")\n");
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
+                + ", empty: " + op.empty + ", index: " + op.index + "};// UDT(" + udts[op.index].name + ")\n";
             break;
           case id.REP:
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type + ", min: "
-                + op.min + ", max: " + op.max + "};// REP\n");
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type + ", min: "
+                + op.min + ", max: " + op.max + "};// REP\n";
             break;
           case id.AND:
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
-                + "};// AND\n");
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
+                + "};// AND\n";
             break;
           case id.NOT:
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
-                + "};// NOT\n");
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
+                + "};// NOT\n";
             break;
           case id.ABG:
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
-                + "};// ABG(%^)\n");
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
+                + "};// ABG(%^)\n";
             break;
           case id.AEN:
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
-                + "};// AEN(%$)\n");
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
+                + "};// AEN(%$)\n";
             break;
           case id.BKA:
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
-                + "};// BKA\n");
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
+                + "};// BKA\n";
             break;
           case id.BKN:
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
-                + "};// BKN\n");
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
+                + "};// BKN\n";
             break;
           case id.TLS:
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
-                + ", string: [" + op.string.toString() + "]};// TLS\n");
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
+                + ", string: [" + op.string.toString() + "]};// TLS\n";
             break;
           case id.TBS:
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
-                + ", string: [" + op.string.toString() + "]};// TBS\n");
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type
+                + ", string: [" + op.string.toString() + "]};// TBS\n";
             break;
           case id.TRG:
-            fs.writeSync(fd, "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type + ", min: "
-                + op.min + ", max: " + op.max + "};// TRG\n");
+            source += "  this.rules[" + ruleIndex + "].opcodes[" + opIndex + "] = {type: " + op.type + ", min: "
+                + op.min + ", max: " + op.max + "};// TRG\n";
             break;
           }
         });
       });
-      fs.writeSync(fd, "\n");
-      fs.writeSync(fd,
-          "  // The `toString()` function will display the original grammar file(s) that produced these opcodes.\n");
-      fs.writeSync(fd, "  this.toString = function(){\n");
-      fs.writeSync(fd, '    var str = "";\n');
+      source += "\n";
+      source +=
+          "  // The `toString()` function will display the original grammar file(s) that produced these opcodes.\n";
+      source += "  this.toString = function(){\n";
+      source += '    var str = "";\n';
       var str;
       grammarAnalysisParser.lines.forEach(function(line, index) {
         var end = line.beginChar + line.length;
         str = "";
-        fs.writeSync(fd, '    str += "');
+        source += '    str += "';
         for (var i = line.beginChar; i < end; i += 1) {
           switch (grammarAnalysisParser.chars[i]) {
           case 9:
@@ -9015,22 +10477,22 @@ module.exports = function() {
             str = String.fromCharCode(grammarAnalysisParser.chars[i]);
             break;
           }
-          fs.writeSync(fd, str);
+          source += str;
         }
-        fs.writeSync(fd, '";\n');
+        source += '";\n';
       });
-      fs.writeSync(fd, '    return str;\n');
-      fs.writeSync(fd, '  }\n');
-      fs.writeSync(fd, "}\n");
-      fs.close(fd);
+      source += '    return str;\n';
+      source += '  }\n';
+      source += "}\n";
     } catch (e) {
       throw new Error(thisFileName + "generateJavaScript(): file system error\n" + e.message);
     }
-    return fileName;
+    return source;
   }
-  /* generate a grammar file object */
-  /* same object as instantiating the function defined in the output file above */
-  /* used internally by the apg-exp application */
+  // Generate a grammar file object.
+  // Returns the same object as instantiating the constructor function returned by<br>
+  //`this.generateSource()`.<br>
+  // It is used internally by the **apg-exp** application.
   this.generateObject = function(rules, udts) {
     var obj = {};
     if (grammarAnalysisParser) {
@@ -9067,7 +10529,7 @@ module.exports = function() {
   }
 }
 
-},{"./abnf-for-sabnf-grammar.js":24,"./semantic-callbacks.js":34,"./syntax-callbacks.js":35,"apg-lib":18,"fs":1}],26:[function(require,module,exports){
+},{"./abnf-for-sabnf-grammar.js":28,"./semantic-callbacks.js":37,"./syntax-callbacks.js":38,"apg-lib":21}],30:[function(require,module,exports){
 // This module is used by [`attributes.js`](./attributes.html) to determine rule dependencies
 // (which rules are referenced by the given rule)
 // and the attribute type of each rule.
@@ -9086,12 +10548,6 @@ module.exports = function() {
 //Additionally, and important to the algorithms internally, are
 // non-recursive rules that refer to mutually recursive sets, and simple recursive rules
 // that refer to mutually recursive sets.
-// On the output page `html/attributes.html` these are designated as:
-// - N - non-recursive
-// - R - simple recursive
-// - MR - belongs to a mutually recursive set
-// - NMR - non-recursive, but refers to one or more mutually recursive set member
-// - RMR -  simple recursive, but refers to one or more mutually recursive set member
 module.exports = function(rules) {
   "use strict";
   var thisFileName = "attribute-types.js: ";
@@ -9107,6 +10563,9 @@ module.exports = function(rules) {
         rule.ctrl.refCount[op.index] += 1;
         if (rule.ctrl.isScanned[op.index] === 0)
           scan(rule, op.index);
+      }
+      if (op.type === id.UDT) {
+        rule.ctrl.udtRefCount[op.index] += 1;
       }
     });
   }
@@ -9162,7 +10621,7 @@ module.exports = function(rules) {
   }
 }
 
-},{"apg-lib":18}],27:[function(require,module,exports){
+},{"apg-lib":21}],31:[function(require,module,exports){
 // This module is used by [`attributes.js`](./attributes.html) to determine non-recursive attributes
 // (`finite`, `empty` and `not empty`) of each rule.
 // The non-recursive attributes of all rules are needed by the algorithms which determine the recursive attributes.
@@ -9384,7 +10843,7 @@ module.exports = function(rules) {
   });
 }
 
-},{"apg-lib":18}],28:[function(require,module,exports){
+},{"apg-lib":21}],32:[function(require,module,exports){
 // This module is used by [`attributes.js`](./attributes.html) to determine recursive attributes
 // (`left`, `nested`, `right` & `cyclic`) of each rule.
 //
@@ -9726,14 +11185,13 @@ module.exports = function(rules) {
   }
 }
 
-},{"apg-lib":18}],29:[function(require,module,exports){
+},{"apg-lib":21}],33:[function(require,module,exports){
 // This module, along with
 // [`attribute-types.js`](./attribute-types.html), 
 // [`attributes-recursive.js`](./attributes-recursive.html),
 //  and [`attributes-non-recursive.js`](./attributes-non-recursive.html)
 // determines the rule dependencies (the list of rules referenced by each rule)
 // and rule attributes.
-// Attributes are displayed on the `html/attributes.html` output page.
 //
 // It is well known that recursive-descent parsers will fail if a rule is left recursive.
 // e.g.<br>
@@ -9777,9 +11235,9 @@ module.exports = function() {
   var attrTypes = require("./attribute-types.js");
   var attrNonRecursive = require("./attributes-non-recursive.js");
   var attrRecursive = require("./attributes-recursive.js");
-  var htmlSources = require("./html-files-sources.js");
   var that = this;
   var rules = null;
+  var udts = null;
   var ruleErrorCount = 0;
   var attrChar = function(value, error) {
     var text;
@@ -9911,19 +11369,47 @@ module.exports = function() {
     });
     html += '\n]\n';
     html += 'var attrHasErrors = ' + hasErrors + '\n';
-    html += "</script>\n";
+    html += "<\/script>\n";
     html += '<div id="sort-links" >\n';
     html += "</div>\n";
     return html;
   }
+  var attrsData = function(rules){
+    var error, attr;
+    var data = [];
+    rules.forEach(function(rule) {
+      attr = rule.attr;
+      error = false;
+      if (attr.left === true || attr.cyclic === true || attr.finite === false) {
+        error = true;
+      }
+      var row = {};
+      row.error = error;
+      row.index = rule.index;
+      row.name = rule.name;
+      row.lower = rule.lower;
+      row.type = rule.ctrl.type;
+      row.typename = attrTypeToString(rule.ctrl);
+      row.left = attr.left;
+      row.nested = attr.nested;
+      row.right = attr.right;
+      row.cyclic = attr.cyclic;
+      row.finite = attr.finite;
+      row.empty = attr.empty;
+      row.notempty = attr.notEmpty;
+      data.push(row);
+    });
+    return data;
+  }
   /* Attribute control object constructor. */
-  var AttrCtrl = function(emptyArray) {
+  var AttrCtrl = function(emptyRules, emptyUdts) {
     this.isOpen = false;
     this.isComplete = false;
     this.type = id.ATTR_N;
     this.mrGroupId = -1;
-    this.refCount = emptyArray.slice(0);
-    this.isScanned = emptyArray.slice(0);
+    this.refCount = emptyRules.slice(0);
+    this.udtRefCount = emptyUdts.slice(0);
+    this.isScanned = emptyRules.slice(0);
   }
   /* Attribute object constructor. */
   var Attr = function(recursive) {
@@ -10033,21 +11519,50 @@ module.exports = function() {
       for (var i = 0; i < rules.length; i += 1) {
         if (rule.ctrl.refCount[i] > 0) {
           if (icount === 0) {
-            html += '{name: "' + rules[i].name + '", index: ' + i + '}'
+            html += '{name: "' + rules[i].name + '", index: ' + i + '}';
             icount += 1;
           } else {
             html += ',';
-            html += '{name: "' + rules[i].name + '", index: ' + i + '}'
+            html += '{name: "' + rules[i].name + '", index: ' + i + '}';
           }
         }
       }
       html += ']}\n';
     });
     html += ']};\n';
-    html += "</script>\n";
+    html += "<\/script>\n";
     html += '<div id="sort-links" >\n';
     html += "</div>\n";
     return html;
+  }
+  this.rulesWithReferencesData = function(){
+    var data = {indexSort: "up", nameSort: "none", rows: []};
+    rules.forEach(function(rule){
+      var row = {};
+      row.name = rule.name;
+      row.lower = rule.lower;
+      row.index = rule.index;
+      row.show = true;
+      row.dependents = [];
+      for(var i = 0; i < rules.length; i += 1){
+        if(rule.ctrl.refCount[i] > 0){
+          var dependent = {};
+          dependent.name = rules[i].name;
+          dependent.index = i;
+          row.dependents.push(dependent);
+        }
+      }
+      for(var i = 0; i < udts.length; i += 1){
+        if(rule.ctrl.udtRefCount[i] > 0){
+          var dependent = {};
+          dependent.name = udts[i].name;
+          dependent.index = udts[i].index;
+          row.dependents.push(dependent);
+        }
+      }
+      data.rows.push(row);
+    });
+    return data;
   }
 
   /* Perform the initial sorting of the rule names. */
@@ -10061,21 +11576,38 @@ module.exports = function() {
     rules.sort(sortByIndex); // make sure rules are left sorted by index - errors may change this
     return html;
   }
+  this.ruleAttrsData = function() {
+    rules.sort(sortByIndex);
+    if (ruleErrorCount > 0) {
+      rules.sort(sortByError);
+    }
+    var data = attrsData(rules);
+    rules.sort(sortByIndex); // make sure rules are left sorted by index - errors may change this
+    return data;
+  }
+  this.udtAttrsData = function() {
+    return attrsData(udts);
+  }
   // The main, driver function that controls the flow of attribute generation.
   // - determine rule dependencies and types (recursive, non-recursive, etc.)
   // - determine all of the non-recursive attributes first(finite, empty & non-empty).
   // These are required by the alogrithms that determine the recursive attributes.
   // - finally, determine the recursive attributes (left, nested, right & cyclic)
-  this.getAttributes = function(grammarRules, rulesLineMap) {
+  this.getAttributes = function(grammarRules, grammarUdts, rulesLineMap) {
     rules = grammarRules;
+    udts = grammarUdts;
     rules.attrConstructor = Attr;
     rules.nameListConstructor = NameList;
-    var emptyArray = [];
+    var emptyRules = [];
+    var emptyUdts = [];
     rules.forEach(function() {
-      emptyArray.push(0);
+      emptyRules.push(0);
+    });
+    udts.forEach(function(udt){
+      emptyUdts.push(0);
     });
     rules.forEach(function(rule) {
-      rule.ctrl = new AttrCtrl(emptyArray);
+      rule.ctrl = new AttrCtrl(emptyRules, emptyUdts);
     });
     attrTypes(rules);
     rules.forEach(function(rule) {
@@ -10083,6 +11615,19 @@ module.exports = function() {
         rule.attr = new Attr(true);
       } else {
         rule.attr = new Attr();
+      }
+    });
+    udts.forEach(function(udt){
+      udt.ctrl = {type: id.ATTR_N};
+      udt.attr = {
+          left: false,
+          nested: false,
+          right: false,
+          cyclic: false,
+          finite: true,
+          empty: udt.empty,
+          notEmpty: true,
+          error: false
       }
     });
     attrNonRecursive(rules);
@@ -10123,7 +11668,7 @@ module.exports = function() {
   };
 }
 
-},{"./attribute-types.js":26,"./attributes-non-recursive.js":27,"./attributes-recursive.js":28,"./html-files-sources.js":31,"apg-lib":18}],30:[function(require,module,exports){
+},{"./attribute-types.js":30,"./attributes-non-recursive.js":31,"./attributes-recursive.js":32,"apg-lib":21}],34:[function(require,module,exports){
 // This module serves only to export all other objects and object constructors with a single `require("apg-lib")` statement.
 /*
 * COPYRIGHT: Copyright (c) 2016 Lowell D. Thomas, all rights reserved
@@ -10137,768 +11682,7 @@ exports.attributes = require("./attributes.js");
 exports.inputAnalysisParser = require("./input-analysis-parser.js");
 exports.ABNFForSABNFParser = require("./abnf-for-sabnf-parser.js");
 
-},{"./abnf-for-sabnf-parser.js":25,"./attributes.js":29,"./input-analysis-parser.js":33}],31:[function(require,module,exports){
-// This module simply defines several HTML quantities as text strings.
-// This avoids the need for the application to carry along 
-// resource functions that need to be available and read in.
-
-"use strict;"
-// Sinorca Screen is the main CSS file used to display the apg output in HTML format.
-// All of the pages, `/html/console.html`, etc. use it.
-/*******************************************************************************************************************************
- * TITLE: Sinorca Screen Stylesheet * URI : sinorca/sinorca-screen.css * MODIF: 2003-Apr-30 19:31 +0800 *
- ******************************************************************************************************************************/
-exports.screenCss = function(){
-  var html = '';
-  html = '<style media="screen">';
-  html += "pre {";
-  html += "line-height: 1.2em;";
-  html += "font-size: 1.2em;";0
-  html += "}";
-  html += "body {";
-  html += "color: black;";
-  html += "background-color: rgb(240, 240, 240);";
-  html += "font-family: verdana, helvetica, arial, sans-serif;";
-  html += "font-size: 71%; /* Enables font size scaling in MSIE */";
-  html += "margin: 0;";
-  html += "padding: 0;";
-  html += "}";
-  html += "html>body {";
-  html += "font-size: 8.5pt;";
-  html += "}";
-  html += "acronym, .titleTip {";
-  html += "border-bottom: 1px dotted rgb(153, 153, 153);";
-  html += "cursor: help;";
-  html += "margin: 0;";
-  html += "padding: 0 0 0.4px 0;";
-  html += "}";
-  html += ".doNotDisplay {";
-  html += "display: none;";
-  html += "}";
-  html += ".smallCaps {";
-  html += "font-size: 110%;";
-  html += "font-variant: small-caps;";
-  html += "}";
-  html += ".superHeader {";
-  html += "color: white;";
-  html += "background-color: rgb(100, 135, 220);";
-  html += "height: 2em;";
-  html += "}";
-  html += ".superHeader a {";
-  html += "color: white;";
-  html += "background-color: transparent;";
-  html += "text-decoration: none;";
-  html += "font-size: 91%;";
-  html += "margin: 0;";
-  html += "padding: 0 0.5ex 0 0.25ex;";
-  html += "}";
-  html += ".superHeader a:hover {";
-  html += "text-decoration: underline;";
-  html += "}";
-  html += ".superHeader .left {";
-  html += "position: absolute;";
-  html += "left: 1.5mm;";
-  html += "top: 0.75ex;";
-  html += "}";
-  html += ".superHeader .right {";
-  html += "position: absolute;";
-  html += "right: 1.5mm;";
-  html += "top: 0.75ex;";
-  html += "}";
-  html += ".midHeader {";
-  html += "color: rgb(39, 78, 144);";
-  html += "background-color: rgb(140, 170, 230);";
-  html += "}";
-  html += ".headerTitle {";
-  html += "font-size: 337%;";
-  html += "font-weight: normal;";
-  html += "margin: 0 0 0 4mm;";
-  html += "padding: 0.25ex 0;";
-  html += "}";
-  html += ".subHeader {";
-  html += "color: white;";
-  html += "background-color: rgb(0, 51, 153);";
-  html += "margin: 0;";
-  html += "padding: 1ex 1ex 1ex 1.5mm;";
-  html += "}";
-  html += ".subHeader a {";
-  html += "color: white;";
-  html += "background-color: transparent;";
-  html += "text-decoration: none;";
-  html += "font-weight: bold;";
-  html += "margin: 0;";
-  html += "padding: 0 0.75ex 0 0.5ex;";
-  html += "}";
-  html += ".subHeader a:hover {";
-  html += "text-decoration: underline;";
-  html += "}";
-  html += ".superHeader .highlight, .subHeader .highlight {";
-  html += "color: rgb(253, 160, 91);";
-  html += "background-color: transparent;";
-  html += "}";
-  html += "#side-bar {";
-  html += "width: 15em;";
-  html += "float: left;";
-  html += "clear: left;";
-  html += "border-right: 1px solid rgb(153, 153, 153);";
-  html += "}";
-  html += "#side-bar div {";
-  html += "border-bottom: 1px solid rgb(153, 153, 153);";
-  html += "}";
-  html += ".sideBarTitle {";
-  html += "font-weight: bold;";
-  html += "margin: 0 0 0.5em 2.5mm;";
-  html += "padding: 1em 0 0 0;";
-  html += "}";
-  html += "#side-bar ul {";
-  html += "list-style-type: none;";
-  html += "list-style-position: outside;";
-  html += "margin: 0;";
-  html += "padding: 0 0 1.1em 0;";
-  html += "}";
-  html += "#side-bar li {";
-  html += "margin: 0;";
-  html += "padding: 0.1ex 0; /* Circumvents a rendering bug (?) in MSIE 6.0 */";
-  html += "}";
-  html += "#side-bar a, .thisPage {";
-  html += "color: rgb(0, 102, 204);";
-  html += "background-color: transparent;";
-  html += "text-decoration: none;";
-  html += "margin: 0;";
-  html += "padding: 0.75em 1ex 0.75em 5mm;";
-  html += "display: block;";
-  html += "}";
-  html += ".thisPage {";
-  html += "color: black;";
-  html += "background-color: white;";
-  html += "padding-left: 4mm;";
-  html += "border-top: 1px solid rgb(153, 153, 153);";
-  html += "border-bottom: 1px solid rgb(153, 153, 153);";
-  html += "}";
-  html += "#side-bar a:hover {";
-  html += "color: white;";
-  html += "background-color: rgb(100, 135, 220);";
-  html += "text-decoration: none;";
-  html += "}";
-  html += ".sideBarText {";
-  html += "line-height: 1.5em;";
-  html += "margin: 0 0 1em 0;";
-  html += "padding: 0 1.5ex 0 2.5mm;";
-  html += "display: block;";
-  html += "}";
-  html += "#side-bar .sideBarText a {";
-  html += "text-decoration: underline;";
-  html += "margin: 0;";
-  html += "padding: 0;";
-  html += "display: inline;";
-  html += "}";
-  html += "#side-bar .sideBarText a:hover {";
-  html += "color: rgb(0, 102, 204);";
-  html += "background-color: transparent;";
-  html += "text-decoration: none;";
-  html += "}";
-  html += ".lighterBackground {";
-  html += "color: inherit;";
-  html += "background-color: white;";
-  html += "}";
-  html += "#main-copy {";
-  html += "color: black;";
-  html += "background-color: white;";
-  html += "text-align: justify;";
-  html += "line-height: 1.5em;";
-  html += "margin: 0 0 0 15em;";
-  html += "padding: 0.5mm 5mm 5mm 5mm;";
-  html += "border-left: 1px solid rgb(153, 153, 153);";
-  html += "}";
-  html += "#main-copy p {";
-  html += "margin: 1em 1ex 2em 1ex;";
-  html += "padding: 0;";
-  html += "}";
-  html += "#main-copy a {";
-  html += "color: rgb(0, 102, 204);";
-  html += "background-color: transparent;";
-  html += "text-decoration: underline;";
-  html += "}";
-  html += "#main-copy a:hover {";
-  html += "text-decoration: none;";
-  html += "}";
-  html += "#main-copy h1 {";
-  html += "color: white;";
-  html += "background-color: rgb(100, 135, 220);";
-  html += "font-size: 100%;";
-  html += "font-weight: bold;";
-  html += "margin: 3em 0 0 0;";
-  html += "padding: 0.5ex 0 0.5ex 1ex;";
-  html += "}";
-  html += "#main-copy .topOfPage {";
-  html += "color: white;";
-  html += "background-color: transparent;";
-  html += "font-size: 91%;";
-  html += "font-weight: bold;";
-  html += "text-decoration: none;";
-  html += "margin: 2.5ex 1ex 0 0; /* For MSIE */";
-  html += "padding: 0;";
-  html += "float: right;";
-  html += "}";
-  html += "#main-copy>.topOfPage {";
-  html += "margin: 2.75ex 1ex 0 0; /* For fully standards-compliant user agents */";
-  html += "}";
-  html += "dl {";
-  html += "margin: 1em 1ex 2em 1ex;";
-  html += "padding: 0;";
-  html += "}";
-  html += "dt {";
-  html += "font-weight: bold;";
-  html += "margin: 0 0 0 0;";
-  html += "padding: 0;";
-  html += "}";
-  html += "dd {";
-  html += "margin: 0 0 2em 2em;";
-  html += "padding: 0;";
-  html += "}";
-  html += "#footer {";
-  html += "color: white;";
-  html += "background-color: rgb(100, 135, 220);";
-  html += "font-size: 91%;";
-  html += "margin: 0;";
-  html += "padding: 1em 2.5mm 2.5ex 2.5mm;";
-  html += "clear: both;";
-  html += "}";
-  html += "#footer .left {";
-  html += "line-height: 1.45em;";
-  html += "float: left;";
-  html += "clear: left;";
-  html += "}";
-  html += "#footer .right {";
-  html += "text-align: right;";
-  html += "line-height: 1.45em;";
-  html += "}";
-  html += "#footer a {";
-  html += "color: white;";
-  html += "background-color: transparent;";
-  html += "text-decoration: underline;";
-  html += "}";
-  html += "#footer a:hover {";
-  html += "text-decoration: none;";
-  html += "}";
-  html += '</style>\n';
-  return html;
-}
-//An alternative CSS style sheet to be used for printing an HTML page.
-/*******************************************************************************************************************************
- * TITLE: Sinorca Print Stylesheet * URI : sinorca/sinorca-print.css * MODIF: 2003-May-01 19:30 +0800 *
- ******************************************************************************************************************************/
-exports.printCss = function(){
-  var html = '';
-  html = '<style media="print">';
-  html += 'body {';
-  html += 'color: black;';
-  html += 'background-color: white;';
-  html += 'font-family: "times new roman", times, roman, serif;';
-  html += 'font-size: 12pt;';
-  html += 'margin: 0;';
-  html += 'padding: 0;';
-  html += '}';
-  html += 'acronym, .titleTip {';
-  html += 'font-style: italic;';
-  html += 'border-bottom: none;';
-  html += '}';
-  html += 'acronym:after, .titleTip:after {  /* Prints titles after the acronyms/titletips. Doesn\'t work in MSIE */';
-  html += 'content: "(" attr(title) ")\n  font-size: 90%;';
-  html += 'font-style: normal;';
-  html += 'padding-left: 1ex;';
-  html += '}';
-  html += '.doNotPrint {';
-  html += 'display: none !important;';
-  html += '}';
-  html += '#header {';
-  html += 'margin: 0;';
-  html += 'padding: 0;';
-  html += 'border-bottom: 1px solid black;';
-  html += '}';
-  html += '.superHeader {';
-  html += 'display: none;';
-  html += '}';
-  html += '.headerTitle {';
-  html += 'color: black;';
-  html += 'background-color: transparent;';
-  html += 'font-family: "trebuchet ms", verdana, helvetica, arial, sans-serif;';
-  html += 'font-size: 200%;';
-  html += 'font-weight: normal;';
-  html += 'text-decoration: none;';
-  html += 'margin: 0;';
-  html += 'padding: 0 0 0.5ex 0;';
-  html += '}';
-  html += '.subHeader {';
-  html += 'display: none;';
-  html += '}';
-  html += '#side-bar {';
-  html += 'display: none;';
-  html += '}';
-  html += '#main-copy {';
-  html += 'text-align: justify;';
-  html += 'margin: 0;';
-  html += 'padding: 0;';
-  html += '}';
-  html += '#main-copy h1 {';
-  html += 'font-family: "trebuchet ms", verdana, helvetica, arial, sans-serif;';
-  html += 'font-size: 120%;';
-  html += 'margin: 2ex 0 1ex 0;';
-  html += 'padding: 0;';
-  html += '}';
-  html += '#main-copy a {';
-  html += 'color: black;';
-  html += 'background-color: transparent;';
-  html += 'text-decoration: none;';
-  html += '}';
-  html += '#main-copy a:after {  /* Prints the links\' URIs after the links\' texts.Doesn\'t work in MSIE */';
-  html += 'content: "<" attr(href) ">\n  font-size: 90%;';
-  html += 'padding-left: 1ex;';
-  html += '}';
-  html += 'p {';
-  html += 'margin: 0 0 2ex 0;';
-  html += 'padding: 0;';
-  html += '}';
-  html += 'dl {';
-  html += 'margin: 0;';
-  html += 'padding: 0;';
-  html += '}';
-  html += 'dt {';
-  html += 'font-weight: bold;';
-  html += 'margin: 0;';
-  html += 'padding: 0 0 1ex 0;';
-  html += '}';
-  html += 'dd {';
-  html += 'margin: 0 0 2ex 1.5em;';
-  html += 'padding: 0;';
-  html += '}';
-  html += '.topOfPage {';
-  html += 'display: none;';
-  html += '}';
-  html += '#footer {';
-  html += 'margin: 2em 0 0 0;';
-  html += 'padding: 1ex 0 0 0;';
-  html += 'border-top: 1px solid black;';
-  html += '}';
-  html += '#footer a {';
-  html += 'color: black;';
-  html += 'background-color: transparent;';
-  html += 'text-decoration: none;';
-  html += '}';
-  html += '</style>\n';
-  return html;
-}
-//Attributes table style.
-exports.attrsStyle = function(){
-  var html = '';
-  html = "<style>";
-  html += ".attr-table{\n";
-  html += "font-family:monospace;\n";
-  html += "font-size:100%;\n";
-  html += "font-style:normal;\n";
-  html += "font-weight:normal;\n";
-  html += "border:1px solid black;\n";
-  html += "border-collapse:collapse;\n";
-  html += "}\n";
-  html += ".attr-table th,\n";
-  html += ".attr-table td{\n";
-  html += "text-align:center;\n";
-  html += "border:1px solid black;\n";
-  html += "border-collapse:collapse;\n";
-  html += "}\n";
-  html += ".attr-table caption{font-size:125%;font-weight:bold;text-align:left;}\n";
-  html += ".attr-table th:nth-child(1){text-align:right;}\n";
-  html += ".attr-table th:nth-child(2){text-align:right;}\n";
-  html += ".attr-table td:nth-child(1){text-align:right;}\n";
-  html += ".attr-table td:nth-child(2){text-align:right;}\n";
-  html += "</style>\n";
-  return html;
-}
-// This is the JavaScript code for sorting the rule list
-// as well for the show/hide anchors for the list of dependent rules.
-// The `window.onload` function is written to work even if `jQuery` is not available.
-// In that case the table will display, but the anchors for sorting will not work.
-// Uses the `<script>` data written to the page by
-// [rulesWithReferencesToHtml()](./attributes.html#section-12)
-exports.rulesSort = function(classname){
-  var html = '';
-  html = '<script type="text/javascript">\n'
-  html += "\"use strict;\"\n";
-  html += "\n";
-  html += 'window.onload = function() {\n';
-  html += 'if(window.jQuery){\n';
-  html += '    sort({data: "index"});\n';
-  html += '  }else{\n';
-  html += '    var el = document.getElementById("sort-links");\n';
-  html += '    el.innerHTML = tableGen();\n';
-  html += '  }\n';
-  html += '}\n';
-  html += "\n";
-  html += "function sortByNameDown(lhs, rhs){\n";
-  html += " if(lhs.name < rhs.name){\n";
-  html += "   return -1;\n";
-  html += " }\n";
-  html += " if(lhs.name > rhs.name){\n";
-  html += "   return 1;\n";
-  html += " }\n";
-  html += " return 0;\n";
-  html += "}\n";
-  html += "function sortByNameUp(lhs, rhs){\n";
-  html += " if(lhs.name < rhs.name){\n";
-  html += "   return 1;\n";
-  html += " }\n";
-  html += " if(lhs.name > rhs.name){\n";
-  html += "   return -1;\n";
-  html += " }\n";
-  html += " return 0;\n";
-  html += "}\n";
-  html += "function sortByIndexDown(lhs, rhs){\n";
-  html += " if(lhs.index < rhs.index){\n";
-  html += "   return -1;\n";
-  html += " }\n";
-  html += " if(lhs.index > rhs.index){\n";
-  html += "   return 1;\n";
-  html += " }\n";
-  html += " return 0;\n";
-  html += "}\n";
-  html += "function sortByIndexUp(lhs, rhs){\n";
-  html += " if(lhs.index < rhs.index){\n";
-  html += "   return 1;\n";
-  html += " }\n";
-  html += " if(lhs.index > rhs.index){\n";
-  html += "   return -1;\n";
-  html += " }\n";
-  html += " return 0;\n";
-  html += "}\n";
-  html += "function sort(e) {\n";
-  html += " if(e.data === \"index\"){\n";
-  html += "   if(tableData.indexSort === \"down\"){\n";
-  html += "     tableData.rows.sort(sortByIndexUp);\n";
-  html += "     tableData.indexSort = \"up\"\n";
-  html += "   }else{\n";
-  html += "     tableData.rows.sort(sortByIndexDown);\n";
-  html += "     tableData.indexSort = \"down\"\n";
-  html += "   }\n";
-  html += " }else{\n";
-  html += "   if(tableData.nameSort === \"down\"){\n";
-  html += "     tableData.rows.sort(sortByNameUp);\n";
-  html += "     tableData.nameSort = \"up\"\n";
-  html += "   }else{\n";
-  html += "     tableData.rows.sort(sortByNameDown);\n";
-  html += "     tableData.nameSort = \"down\"\n";
-  html += "   }\n";
-  html += " }\n";
-  html += " $(\"div#sort-links\").html(tableGen());\n";
-  html += " $(\"#sort-links a.sortIndex\").click(\"index\", sort);\n";
-  html += " $(\"#sort-links a.sortName\").click(\"name\", sort);\n";
-  html += " $(\"#sort-links a.sortExpand\").click(\"show\", showAll);\n";
-  html += " $(\"#sort-links a.sortCollapse\").click(\"hide\", showAll);\n";
-  html += " tableData.rows.forEach(function(row) {\n";
-  html += "   var text = $(\"#sort-links a.show-\" + row.name);\n";
-  html += "   text.click(row, show);\n";
-  html += "   if(row.visible === true){\n";
-  html += "     text.html(\"hide\");\n";
-  html += "     $(\"#sort-links tr.tr-\" + row.name).show();\n";
-  html += "   }else{\n";
-  html += "     text.html(\"show\");\n";
-  html += "     $(\"#sort-links tr.tr-\" + row.name).hide();\n";
-  html += "   }\n";
-  html += " });\n";
-  html += "}\n";
-  html += "function showAll(e){\n";
-  html += " tableData.rows.forEach(function(row){\n";
-  html += "   var text = $(\"#sort-links a.show-\" + row.name);\n";
-  html += "   var line = $(\"#sort-links tr.tr-\" + row.name);\n";
-  html += "   if(e.data === \"show\"){\n";
-  html += "     text.html(\"hide\");\n";
-  html += "     $(\"#sort-links tr.tr-\" + row.name).show();\n";
-  html += "     row.visible = true;\n";
-  html += "   }else{\n";
-  html += "     text.html(\"show\");\n";
-  html += "     $(\"#sort-links tr.tr-\" + row.name).hide();\n";
-  html += "     row.visible = false;\n";
-  html += "   }\n";
-  html += " });\n";
-  html += "}\n";
-  html += "function show(e) {\n";
-  html += " var row = e.data;\n";
-  html += " var text = $(e.target);\n";
-  html += " if(row.visible === true){\n";
-  html += "   text.html(\"show\");\n";
-  html += "   $(\"#sort-links tr.tr-\" + row.name).hide();\n";
-  html += "   row.visible = false;\n";
-  html += " }else{\n";
-  html += "   text.html(\"hide\");\n";
-  html += "   $(\"#sort-links tr.tr-\" + row.name).show();\n";
-  html += "   row.visible = true;\n";
-  html += " }\n";
-  html += "}\n";
-  html += "function tableGen(e) {\n";
-  html += " var title = \"Rules with Dependencies\"\n";
-  html += " var html = \"\";\n";
-  html += " html += '<table class=\""+classname+"\">';\n";
-  html += " html += '<caption>' + title;\n";
-  html += " html += '<br><a class=sortExpand href=\"#\">show all<\/a><br><a class=sortCollapse href=\"#\">hide all<\/a>';\n";
-  html += " html += '<\/caption>';\n";
-  html += " html += '<tr><th><a class=\"sortIndex\" href=\"#\">index<\/a><\/th><th><a class=\"sortName\" href=\"#\">rule<\/a><\/th><th>refers to<\/th><\/tr>';\n";
-  html += " tableData.rows.forEach(function(rule) {\n";
-  html += "   if (rule.dependents.length > 0) {\n";
-  html += "     html += '<tr><td>' + rule.index + '<\/td><td>' + rule.name\n";
-  html += "         + '<\/td><td><a class=\"show-' + rule.name\n";
-  html += "         + '\" href=\"#\">hide<\/a><\/td><\/tr>';\n";
-  html += "     html += '<div class=\"div-' + rule.name + '\">';\n";
-  html += "     for (var i = 0; i < rule.dependents.length; i += 1) {\n";
-  html += "       var obj = rule.dependents[i];\n";
-  html += "       html += '<tr class=\"tr-' + rule.name + '\"><td><\/td><td>'\n";
-  html += "           + obj.index + '<\/td><td>' + obj.name\n";
-  html += "           + '<\/td><\/tr>';\n";
-  html += "     }\n";
-  html += "   } else {\n";
-  html += "     html += '<tr><td>' + rule.index + '<\/td><td>' + rule.name\n";
-  html += "         + '<\/td><td><\/td><\/tr>';\n";
-  html += "   }\n";
-  html += " });\n";
-  html += " html += \"<\/table>\";\n";
-  html += " return html;\n";
-  html += "}</script>\n";
-  return html;
-}
-// This is the JavaScript code for sorting the attributes list
-// on the `html/attributes.html` page.
-// The `window.onload` function is written to work even if `jQuery` is not available.
-// In that case the table will display, but the anchors for sorting will not work.
-// Uses the `<script>` data written to the page by
-// [attrsToHtml()](./attributes.html#section-7)
-exports.attrsSort = function(classname){
-  var html = '';
-  html = '<script type="text/javascript">\n'
-  html += "\"use strict;\"\n";
-  html += "\n";
-  html += 'window.onload = function() {\n';
-  html += 'if(window.jQuery){\n';
-  html += '    sort({data: "null"});\n';
-  html += '  }else{\n';
-  html += '    var el = document.getElementById("sort-links");\n';
-  html += '    el.innerHTML = tableGen();\n';
-  html += '  }\n';
-  html += '}\n';
-  html += "\n";
-  html += "function sortCols(lhs, rhs) {\n";
-  html += " var lval, rval;\n";
-  html += " switch (attrSortCol) {\n";
-  html += " case \"rule\":\n";
-  html += "   \/\/ alphabetical\n";
-  html += "   lval = lhs.lower;\n";
-  html += "   rval = rhs.lower;\n";
-  html += "   break;\n";
-  html += " case \"type\":\n";
-  html += "   \/\/ numerical on type\n";
-  html += "   lval = lhs.type;\n";
-  html += "   rval = rhs.type;\n";
-  html += "   break;\n";
-  html += " case \"left\":\n";
-  html += "   \/\/ descending: false (no) preceeds true (yes)\n";
-  html += "   lval = (lhs.left === false) ? 0 : 1;\n";
-  html += "   rval = (rhs.left === false) ? 0 : 1;\n";
-  html += "   break;\n";
-  html += " case \"nested\":\n";
-  html += "   lval = (lhs.nested === false) ? 0 : 1;\n";
-  html += "   rval = (rhs.nested === false) ? 0 : 1;\n";
-  html += "   break;\n";
-  html += " case \"right\":\n";
-  html += "   lval = (lhs.right === false) ? 0 : 1;\n";
-  html += "   rval = (rhs.right === false) ? 0 : 1;\n";
-  html += "   break;\n";
-  html += " case \"cyclic\":\n";
-  html += "   lval = (lhs.cyclic === false) ? 0 : 1;\n";
-  html += "   rval = (rhs.cyclic === false) ? 0 : 1;\n";
-  html += "   break;\n";
-  html += " case \"finite\":\n";
-  html += "   lval = (lhs.finite === false) ? 0 : 1;\n";
-  html += "   rval = (rhs.finite === false) ? 0 : 1;\n";
-  html += "   break;\n";
-  html += " case \"empty\":\n";
-  html += "   lval = (lhs.empty === false) ? 0 : 1;\n";
-  html += "   rval = (rhs.empty === false) ? 0 : 1;\n";
-  html += "   break;\n";
-  html += " case \"notempty\":\n";
-  html += "   lval = (lhs.notempty === false) ? 0 : 1;\n";
-  html += "   rval = (rhs.notempty === false) ? 0 : 1;\n";
-  html += "   break;\n";
-  html += " case \"index\":\n";
-  html += " default:\n";
-  html += "   \/\/ numerical\n";
-  html += "   lval = lhs.index;\n";
-  html += "   rval = rhs.index;\n";
-  html += "   break;\n";
-  html += " }\n";
-  html += " if (lval < rval) {\n";
-  html += "   if (attrSortDir === 0) {\n";
-  html += "     return -1;\n";
-  html += "   }\n";
-  html += "   return 1;\n";
-  html += " }\n";
-  html += " if (lval > rval) {\n";
-  html += "   if (attrSortDir === 0) {\n";
-  html += "     return 1;\n";
-  html += "   }\n";
-  html += "   return -1;\n";
-  html += " }\n";
-  html += " return 0;\n";
-  html += "}\n";
-  html += "function sortErrors(lhs, rhs) {\n";
-  html += " var rerror = (rhs.left === true || rhs.cyclic === true || rhs.finite === false) ? true : false;\n";
-  html += " var lerror = (lhs.left === true || lhs.cyclic === true || lhs.finite === false) ? true : false;\n";
-  html += " \n";
-  html += " if (rerror === false && lerror === true ) {\n";
-  html += "   return -1;\n";
-  html += " }\n";
-  html += " if (rerror === true && lerror === false) {\n";
-  html += "   return 1;\n";
-  html += " }\n";
-  html += " return 0;\n";
-  html += "}\n";
-  html += "function sort(e) {\n";
-  html += " if (e.data !== null) {\n";
-  html += "   \/\/ sort direction: 0 = descending, 1 = ascending\n";
-  html += "   switch (e.data) {\n";
-  html += "   case \"rule\":\n";
-  html += "     attrSortCol = \"rule\"\n";
-  html += "     attrDirs.rule = (attrDirs.rule === 0) ? 1 : 0;\n";
-  html += "     attrSortDir = attrDirs.rule;\n";
-  html += "     break;\n";
-  html += "   case \"type\":\n";
-  html += "     attrSortCol = \"type\"\n";
-  html += "     attrDirs.type = (attrDirs.type === 0) ? 1 : 0;\n";
-  html += "     attrSortDir = attrDirs.type;\n";
-  html += "     break;\n";
-  html += "   case \"left\":\n";
-  html += "     attrSortCol = \"left\"\n";
-  html += "     attrDirs.left = (attrDirs.left === 0) ? 1 : 0;\n";
-  html += "     attrSortDir = attrDirs.left;\n";
-  html += "     break;\n";
-  html += "   case \"nested\":\n";
-  html += "     attrSortCol = \"nested\"\n";
-  html += "     attrDirs.nested = (attrDirs.nested === 0) ? 1 : 0;\n";
-  html += "     attrSortDir = attrDirs.nested;\n";
-  html += "     break;\n";
-  html += "   case \"right\":\n";
-  html += "     attrSortCol = \"right\"\n";
-  html += "     attrDirs.right = (attrDirs.right === 0) ? 1 : 0;\n";
-  html += "     attrSortDir = attrDirs.right;\n";
-  html += "     break;\n";
-  html += "   case \"cyclic\":\n";
-  html += "     attrSortCol = \"cyclic\"\n";
-  html += "     attrDirs.cyclic = (attrDirs.cyclic === 0) ? 1 : 0;\n";
-  html += "     attrSortDir = attrDirs.cyclic;\n";
-  html += "     break;\n";
-  html += "   case \"finite\":\n";
-  html += "     attrSortCol = \"finite\"\n";
-  html += "     attrDirs.finite = (attrDirs.finite === 0) ? 1 : 0;\n";
-  html += "     attrSortDir = attrDirs.finite;\n";
-  html += "     break;\n";
-  html += "   case \"empty\":\n";
-  html += "     attrSortCol = \"empty\"\n";
-  html += "     attrDirs.empty = (attrDirs.empty === 0) ? 1 : 0;\n";
-  html += "     attrSortDir = attrDirs.empty;\n";
-  html += "     break;\n";
-  html += "   case \"notempty\":\n";
-  html += "     attrSortCol = \"notempty\"\n";
-  html += "     attrDirs.notempty = (attrDirs.notempty === 0) ? 1 : 0;\n";
-  html += "     attrSortDir = attrDirs.notempty;\n";
-  html += "     break;\n";
-  html += "   case \"index\":\n";
-  html += "   default:\n";
-  html += "     attrSortCol = \"index\"\n";
-  html += "     attrDirs.index = (attrDirs.index === 0) ? 1 : 0;\n";
-  html += "     attrSortDir = attrDirs.index;\n";
-  html += "     break;\n";
-  html += "   }\n";
-  html += "   attrRows.sort(sortCols);\n";
-  html += "   if (attrHasErrors && attrSortErrors) {\n";
-  html += "     attrRows.sort(sortErrors);\n";
-  html += "   }\n";
-  html += " }\n";
-  html += " function check(){\n";
-  html += "   var errors = $(\"#sort-links input#errors\");\n";
-  html += "   if(errors.is(\":checked\")){\n";
-  html += "     attrSortErrors = true;\n";
-  html += "   }else{\n";
-  html += "     attrSortErrors = false;\n";
-  html += "   }\n";
-  html += " }\n";
-  html += "\n";
-  html += " $(\"div#sort-links\").html(tableGen());\n";
-  html += " $(\"#sort-links a.index\").click(\"index\", sort);\n";
-  html += " $(\"#sort-links a.rule\").click(\"rule\", sort);\n";
-  html += " $(\"#sort-links a.type\").click(\"type\", sort);\n";
-  html += " $(\"#sort-links a.left\").click(\"left\", sort);\n";
-  html += " $(\"#sort-links a.nested\").click(\"nested\", sort);\n";
-  html += " $(\"#sort-links a.right\").click(\"right\", sort);\n";
-  html += " $(\"#sort-links a.cyclic\").click(\"cyclic\", sort);\n";
-  html += " $(\"#sort-links a.finite\").click(\"finite\", sort);\n";
-  html += " $(\"#sort-links a.empty\").click(\"empty\", sort);\n";
-  html += " $(\"#sort-links a.notempty\").click(\"notempty\", sort);\n";
-  html += " $(\"#sort-links input#errors\").click(check);\n";
-  html += "}\n";
-  html += "function yesno(val) {\n";
-  html += " return (val === true) ? \"yes\" : \"no\"\n";
-  html += "}\n";
-  html += "function tableGen(e) {\n";
-  html += " var title = \"Grammar Attributes\"\n";
-  html += " var checked = attrSortErrors ? \"checked\" : \"\"\n";
-  html += " var html = \"\"\n";
-  html += " html += '<table class=\"attr-table\">';\n";
-  html += " html += '<caption>' + title;\n";
-  html += " if(attrHasErrors){\n";
-  html += "   html += '<br><input id=\"errors\" type=\"checkbox\" '+checked+'>keep errors at top<\/input><\/caption>';\n";
-  html += " }\n";
-  html += " html += '<\/caption>';\n";
-  html += " html += '<tr>';\n";
-  html += " html += '<th><a class=\"index\" href=\"#\">index<\/a><\/th>';\n";
-  html += " html += '<th><a class=\"rule\" href=\"#\">rule<\/a><\/th>';\n";
-  html += " html += '<th><a class=\"type\" href=\"#\">type<\/a><\/th>';\n";
-  html += " html += '<th><a class=\"left\" href=\"#\">left<\/a><\/th>';\n";
-  html += " html += '<th><a class=\"nested\" href=\"#\">nested<\/a><\/th>';\n";
-  html += " html += '<th><a class=\"right\" href=\"#\">right<\/a><\/th>';\n";
-  html += " html += '<th><a class=\"cyclic\" href=\"#\">cyclic<\/a><\/th>';\n";
-  html += " html += '<th><a class=\"finite\" href=\"#\">finite<\/a><\/th>';\n";
-  html += " html += '<th><a class=\"empty\" href=\"#\">empty<\/a><\/th>';\n";
-  html += " html += '<th><a class=\"notempty\" href=\"#\">not empty<\/a><\/th>';\n";
-  html += " html += '<\/tr>';\n";
-  html += " attrRows.forEach(function(row) {\n";
-  html += "   var left = yesno(row.left);\n";
-  html += "   if (row.left === true) {\n";
-  html += "     left = '<span class=\""+classname+"\">' + left + '<\/span>';\n";
-  html += "   }\n";
-  html += "   var cyclic = yesno(row.cyclic);\n";
-  html += "   if (row.cyclic === true) {\n";
-  html += "     cyclic = '<span class=\""+classname+"\">' + cyclic + '<\/span>';\n";
-  html += "   }\n";
-  html += "   var finite = yesno(row.finite);\n";
-  html += "   if (row.finite === false) {\n";
-  html += "     finite = '<span class=\""+classname+"\">' + finite + '<\/span>';\n";
-  html += "   }\n";
-  html += "   html += '<tr>';\n";
-  html += "   html += '<td>' + row.index + '<\/td>';\n";
-  html += "   html += '<td>' + row.rule + '<\/td>';\n";
-  html += "   html += '<td>' + row.typename + '<\/td>';\n";
-  html += "   html += '<td>' + left + '<\/td>';\n";
-  html += "   html += '<td>' + yesno(row.nested) + '<\/td>';\n";
-  html += "   html += '<td>' + yesno(row.right) + '<\/td>';\n";
-  html += "   html += '<td>' + cyclic + '<\/td>';\n";
-  html += "   html += '<td>' + finite + '<\/td>';\n";
-  html += "   html += '<td>' + yesno(row.empty) + '<\/td>';\n";
-  html += "   html += '<td>' + yesno(row.notempty) + '<\/td>';\n";
-  html += "   html += '<\/tr>';\n";
-  html += " });\n";
-  html += " html += \"<\/table>\"\n";
-  html += " return html;\n";
-  html += "}</script>\n";
-  return html;
-}
-
-},{}],32:[function(require,module,exports){
+},{"./abnf-for-sabnf-parser.js":29,"./attributes.js":33,"./input-analysis-parser.js":36}],35:[function(require,module,exports){
 // Generated by JavaScript APG, Version 2.0 [`apg-js2`](https://github.com/ldthomas/apg-js2)
 module.exports = function(){
 "use strict";
@@ -10907,7 +11691,7 @@ module.exports = function(){
   //      rules = 10
   //       udts = 0
   //    opcodes = 31
-  //        ABNF original opcodes
+  //        ---   ABNF original opcodes
   //        ALT = 5
   //        CAT = 2
   //        REP = 4
@@ -10915,7 +11699,7 @@ module.exports = function(){
   //        TLS = 0
   //        TBS = 4
   //        TRG = 5
-  //        SABNF superset opcodes
+  //        ---   SABNF superset opcodes
   //        UDT = 0
   //        AND = 0
   //        NOT = 0
@@ -10924,21 +11708,8 @@ module.exports = function(){
   //        BKR = 0
   //        ABG = 0
   //        AEN = 0
-  // characters = [0 - 65535]
+  // characters = [0 - 4294967295]
   //```
-  /* CALLBACK LIST PROTOTYPE (true, false or function reference) */
-  this.callbacks = [];
-  this.callbacks['cr'] = false;
-  this.callbacks['crlf'] = false;
-  this.callbacks['end'] = false;
-  this.callbacks['file'] = false;
-  this.callbacks['invalid'] = false;
-  this.callbacks['last-line'] = false;
-  this.callbacks['lf'] = false;
-  this.callbacks['line'] = false;
-  this.callbacks['line-text'] = false;
-  this.callbacks['valid'] = false;
-
   /* OBJECT IDENTIFIER (for internal parser use) */
   this.grammarObject = 'grammarObject';
 
@@ -10999,7 +11770,7 @@ module.exports = function(){
   this.rules[5].opcodes[1] = {type: 5, min: 0, max: 8};// TRG
   this.rules[5].opcodes[2] = {type: 5, min: 11, max: 12};// TRG
   this.rules[5].opcodes[3] = {type: 5, min: 14, max: 31};// TRG
-  this.rules[5].opcodes[4] = {type: 5, min: 127, max: 65535};// TRG
+  this.rules[5].opcodes[4] = {type: 5, min: 127, max: 4294967295};// TRG
 
   /* end */
   this.rules[6].opcodes = [];
@@ -11028,7 +11799,7 @@ module.exports = function(){
     str += "line-text = *(valid/invalid)\n";
     str += "last-line = 1*(valid/invalid)\n";
     str += "valid = %d32-126 / %d9\n";
-    str += "invalid = %d0-8 / %d11-12 /%d14-31 / %x7f-ffff\n";
+    str += "invalid = %d0-8 / %d11-12 /%d14-31 / %x7f-ffffffff\n";
     str += "end = CRLF / LF / CR\n";
     str += "CRLF = %d13.10\n";
     str += "LF = %d10\n";
@@ -11037,11 +11808,12 @@ module.exports = function(){
   }
 }
 
-},{}],33:[function(require,module,exports){
+},{}],36:[function(require,module,exports){
 (function (Buffer){
 // This module reads the input grammar file and does a preliminary analysis
 //before attempting to parse it into a grammar object.
-// (*See `resources/input-analysis-grammar.bnf` for the grammar file this parser is based on.*)
+// See:<br> `abnf/input-analysis-grammar.bnf`<br>for the grammar file this parser is based on.
+//
 // It has two primary functions.
 // - verify the character codes - no non-printing ASCII characters
 // - catalog the lines - create an array with a line object for each line.
@@ -11054,6 +11826,7 @@ module.exports = function() {
   var apglib = require("apg-lib");
   var id = apglib.ids;
   var Grammar = require("./input-analysis-grammar.js");
+  var converter = require("apg-conv");
   var that = this;
   this.hasInvalidCharacters = false;
   this.originalString = "";
@@ -11148,41 +11921,6 @@ module.exports = function() {
     }
     return id.SEM_OK;
   }
-  // Get the grammar from the named file.
-  this.get = function(filename) {
-    var files = [];
-    this.chars.length = 0;
-    this.lines.length = 0;
-    if (typeof (filename) === "string") {
-      files.push(filename);
-    } else if (Array.isArray(filename)) {
-      files = filename
-    } else {
-      throw new Error("get(): unrecognized input: must be string or array of strings");
-    }
-    inputFileCount = files.length;
-    try {
-      for (var j = 0; j < files.length; j += 1) {
-        var buf = fs.readFileSync(files[j]);
-        for (var i = 0; i < buf.length; i += 1) {
-          this.chars.push(buf[i]);
-        }
-        this.originalString = apglib.utils.charsToString(this.chars);
-      }
-    } catch (e) {
-      throw new Error(thisFileName + "get(): error reading input grammar file\n" + e.message);
-    }
-  };
-  // Get the grammar from the input string.
-  this.getString = function(str) {
-    if (typeof (str) !== "string" || str === "") {
-      throw new Error(thisFileName + 'getString(): input not a valid string: "' + str + '"');
-    }
-    this.originalString = str.slice(0);
-    this.chars.length = 0;
-    this.lines.length = 0;
-    this.chars = apglib.utils.stringToChars(str);
-  }
   // Analyze the grammar for character code errors and catalog the lines.
   /*
    * grammar error format 
@@ -11202,7 +11940,16 @@ module.exports = function() {
    *   invalidChars : number of invalid characters - e.g. 0x255 
    * }
    */
-  this.analyze = function(strict, doTrace) {
+  this.analyze = function(src, strict, doTrace) {
+    if(Buffer.isBuffer(src)){
+      this.chars = converter.decode("BINARY", src);
+    }else if(Array.isArray(src)){
+      this.chars = src.slice();
+    }else if(typeof(src) === "string"){
+      this.chars = converter.decode("STRING", src);
+    }else{
+      throw new TypeError("input source is not a Buffer or string");
+    }
     var ret = {
       hasErrors : false,
       errors : errors,
@@ -11210,20 +11957,6 @@ module.exports = function() {
     }
     if (strict === undefined || strict !== true) {
       strict = false;
-    }
-    for(var i = 0; i < this.chars.length; i += 1){
-      var thisChar = this.chars[i]; 
-      if(thisChar > 65535){
-        errors.push({
-          line : 0,
-          char : i,
-          msg : "input SABNF grammar has invalid character code > 65535: char["+i+"]" + thisChar
-        });
-      }
-    }
-    if(errors.length > 0){
-      ret.hasErrors = true;
-      return ret;
     }
     var grammar = new Grammar();
     var parser = new apglib.parser();
@@ -11266,37 +11999,6 @@ module.exports = function() {
     }
     return ret;
   };
-  /* convert the line ends and output the converted file */
-  var convert = function(filename, end) {
-    if (typeof (filename) !== "string") {
-      throw new Error(thisFileName + "filename is not a string");
-    }
-    try {
-      var fd;
-      var buf;
-      var count;
-      buf = new Buffer(that.chars);
-      fd = fs.openSync(filename, "w");
-      that.lines.forEach(function(val, index) {
-        count = fs.writeSync(fd, buf, val.beginChar, val.textLength);
-        count = fs.writeSync(fd, end, 0, end.length);
-      });
-    } catch (e) {
-      var msg = thisFileName + "convert: can't open file'" + filename + "'\n";
-      msg += e.message;
-      throw new Error(msg);
-    }
-  }
-  // Converts all line ends (`CRLF`, `LF`, `CR` or `EOF`) to `CRLF`, including
-  // last line.
-  this.toCRLF = function(filename) {
-    convert(filename, CRLF);
-  };
-  // Converts all line ends (`CRLF`, `LF`, `CR` or `EOF`) to `LF`, including
-  // last line.
-  this.toLF = function(filename) {
-    convert(filename, LF);
-  };
   // Given a character position, find the line that the character is in.
   this.findLine = function(charIndex) {
     var ret = -1;
@@ -11330,9 +12032,9 @@ module.exports = function() {
     var NORMAL = 0;
     var CONTROL = 1;
     var INVALID = 2;
-    var CONTROL_BEG = '<span class="' + apglib.utils.styleNames.CLASS_CTRL + '">';
+    var CONTROL_BEG = '<span class="' + apglib.style.CLASS_CTRLCHAR + '">';
     var CONTROL_END = "</span>";
-    var INVALID_BEG = '<span class="' + apglib.utils.styleNames.CLASS_NOMATCH + '">';
+    var INVALID_BEG = '<span class="' + apglib.style.CLASS_NOMATCH + '">';
     var INVALID_END = "</span>";
     var end;
     var html = '';
@@ -11432,7 +12134,7 @@ module.exports = function() {
     return html;
   }
   var abnfErrorsToHtml = function(chars, lines, errors, title) {
-    var style = apglib.utils.styleNames;
+    var style = apglib.style;
     var html = "";
     if (!(Array.isArray(chars) && Array.isArray(lines) && Array.isArray(errors))) {
       return html;
@@ -11441,19 +12143,11 @@ module.exports = function() {
       title = null;
     }
     var errorArrow = '<span class="' + style.CLASS_NOMATCH + '">&raquo;</span>';
-    html += '<p><table class="' + style.CLASS_LAST_LEFT_TABLE + '">\n';
+    html += '<p><table class="' + style.CLASS_GRAMMAR + '">\n';
     if (title) {
       html += '<caption>' + title + '</caption>\n';
     }
     html += '<tr><th>line<br>no.</th><th>line<br>offset</th><th>error<br>offset</th><th><br>text</th></tr>\n';
-    /*
-     * grammar error format 
-     * { 
-     *  line: 0, 
-     *  char: 0, 
-     *  msg: "" 
-     * }
-     */
     errors.forEach(function(val) {
       var line, relchar, beg, end, len, length, text, prefix = "", suffix = "";
       if (lines.length === 0) {
@@ -11489,21 +12183,11 @@ module.exports = function() {
   }
   // Display the input string.
   this.toString = function() {
-    var str = "";
-    var thisChars = this.chars;
-    var end;
-    this.lines.forEach(function(line){
-      str += line.lineNo + ": ";
-      str += line.beginChar + ": ";
-      end = line.beginChar + line.textLength;
-      for(var i = line.beginChar; i < end; i += 1){
-        str += String.fromCharCode(thisChars[i]);
-      }
-      str += "\n";
-    });
-    return str;
+    return converter.encode("STRING", this.chars);
   }
-  // Display an array of errors of the form `{line: 0, char: 0, msg: "message"}` as ASCII text.
+  // Display an array of errors of the form<br>
+  //`{line: 0, char: 0, msg: "message"}`<br>
+  //as ASCII text.
   this.errorsToString = function(errors){
     var str, thisChars, thisLines, line, beg, end;
     str = "";
@@ -11539,9 +12223,8 @@ module.exports = function() {
   // Generate an HTML table of the lines.
   this.toHtml = function() {
     var html = "";
-    html += "<p>";
-    html += '<table class="' + apglib.utils.styleNames.CLASS_LAST_LEFT_TABLE + '">\n';
-    var title = "Annotated Input Grammar File";
+    html += '<table class="' + apglib.style.CLASS_GRAMMAR + '">\n';
+    var title = "Annotated Input Grammar";
     if (inputFileCount > 1) {
       title += "s(" + inputFileCount + ")"
     }
@@ -11557,15 +12240,16 @@ module.exports = function() {
       html += '</tr>\n';
     });
 
-    html += '</table></p>\n';
+    html += '</table>\n';
     return html;
   }
 }
 
 }).call(this,require("buffer").Buffer)
-},{"./input-analysis-grammar.js":32,"apg-lib":18,"buffer":2,"fs":1}],34:[function(require,module,exports){
+},{"./input-analysis-grammar.js":35,"apg-conv":6,"apg-lib":21,"buffer":2,"fs":1}],37:[function(require,module,exports){
 // This module has all of the semantic callback functions for the [ABNF for SABNF parser](./abnf-for-sabnf-parser.html).
-// (*See `resources/abnf-for-sabnf-grammar.bnf` for the grammar file these callback functions are based on.*)
+// See:<br> `abnf/abnf-for-sabnf-grammar.bnf`<br>
+//for the grammar file these callback functions are based on.
 // These functions are called by the parser's AST translation function (see `apg-lib` documentation).
 module.exports = function(grammar) {
   "use strict";
@@ -11639,20 +12323,23 @@ module.exports = function(grammar) {
     return num;
   }
 
-  /*
-   * This is the prototype for all semantic analysis callback functions.
-   * 
-   * state - the translator state
-   *   id.SEM_PRE for downward (pre-branch) traversal of the AST
-   *   id.SEM_POST for upward (post branch) traversal of the AST
-   * chars - the array of character codes for the input string
-   * phraseIndex - index into the chars array to the first character of the phrase
-   * phraseCount - the number of characters in the phrase
-   * data - user-defined data passed to the translator for use by the callback functions.
-   * @return id.SEM_OK, normal return.
-   *         id.SEM_SKIP in state id.SEM_PRE will skip the branch below.
-   *         Any thing else is an error which will stop the translation.
-   */
+  // This is the prototype for all semantic analysis callback functions.
+  //````
+  // state - the translator state
+  //   id.SEM_PRE for downward (pre-branch) traversal of the AST
+  //   id.SEM_POST for upward (post branch) traversal of the AST
+  // chars - the array of character codes for the input string
+  // phraseIndex - index into the chars array to the first
+  //               character of the phrase
+  // phraseCount - the number of characters in the phrase
+  // data - user-defined data passed to the translator
+  //        for use by the callback functions.
+  // @return id.SEM_OK, normal return.
+  //         id.SEM_SKIP in state id.SEM_PRE will
+  //         skip the branch below.
+  //         Any thing else is an error which will
+  //         stop the translation.
+  //````
   function semCallbackPrototype(state, chars, phraseIndex, phraseCount, data) {
     var ret = id.SEM_OK;
     if (state == id.SEM_PRE) {
@@ -11660,7 +12347,7 @@ module.exports = function(grammar) {
     }
     return ret;
   }
-  /* The AST callback functions. */
+  // The AST callback functions.
   function semFile(state, chars, phraseIndex, phraseCount, data) {
     var ret = id.SEM_OK;
     if (state == id.SEM_PRE) {
@@ -12308,7 +12995,7 @@ module.exports = function(grammar) {
     }
     return ret;
   }
-  /* define the callback functions to the AST object */
+  // Define the callback functions to the AST object.
   this.callbacks = [];
   this.callbacks['abgop'] = semAbgOp;
   this.callbacks['aenop'] = semAenOp;
@@ -12356,9 +13043,10 @@ module.exports = function(grammar) {
   this.callbacks['xstring'] = semXstring;
 }
 
-},{"apg-lib":18}],35:[function(require,module,exports){
+},{"apg-lib":21}],38:[function(require,module,exports){
 // This module has all of the syntax callback functions for the [ABNF for SABNF parser](./abnf-for-sabnf-parser.html).
-// (*See `resources/abnf-for-sabnf-grammar.bnf` for the grammar file these callback functions are based on.*)
+// See:<br> `abnf/abnf-for-sabnf-grammar.bnf`<br>
+//for the grammar file these callback functions are based on.
 // These functions are called by the parser's RNM operators (see `apg-lib` documentation).
 module.exports = function() {
   "use strict";
@@ -12485,7 +13173,7 @@ module.exports = function() {
         data.errors.push({
           line : data.findLine(phraseIndex),
           char : phraseIndex,
-          msg : "AND operator, &, found - strict ABNF specified."
+          msg : "AND operator(&) found - strict ABNF specified."
         });
       }
       break;
@@ -12504,7 +13192,7 @@ module.exports = function() {
         data.errors.push({
           line : data.findLine(phraseIndex),
           char : phraseIndex,
-          msg : "NOT operator, !, found - strict ABNF specified."
+          msg : "NOT operator(!) found - strict ABNF specified."
         });
       }
       break;
@@ -12523,7 +13211,7 @@ module.exports = function() {
         data.errors.push({
           line : data.findLine(phraseIndex),
           char : phraseIndex,
-          msg : "Positive look-behind operator, .&, found - strict ABNF specified."
+          msg : "Positive look-behind operator(&&) found - strict ABNF specified."
         });
       }
       break;
@@ -12542,7 +13230,45 @@ module.exports = function() {
         data.errors.push({
           line : data.findLine(phraseIndex),
           char : phraseIndex,
-          msg : "Negative look-behind operator, .!, found - strict ABNF specified."
+          msg : "Negative look-behind operator(!!) found - strict ABNF specified."
+        });
+      }
+      break;
+    }
+  }
+  var synAbgOp = function(result, chars, phraseIndex, data) {
+    switch (result.state) {
+    case id.ACTIVE:
+      break;
+    case id.EMPTY:
+      break;
+    case id.NOMATCH:
+      break;
+    case id.MATCH:
+      if (data.strict) {
+        data.errors.push({
+          line : data.findLine(phraseIndex),
+          char : phraseIndex,
+          msg : "Beginning of string anchor(%^) found - strict ABNF specified."
+        });
+      }
+      break;
+    }
+  }
+  var synAenOp = function(result, chars, phraseIndex, data) {
+    switch (result.state) {
+    case id.ACTIVE:
+      break;
+    case id.EMPTY:
+      break;
+    case id.NOMATCH:
+      break;
+    case id.MATCH:
+      if (data.strict) {
+        data.errors.push({
+          line : data.findLine(phraseIndex),
+          char : phraseIndex,
+          msg : "End of string anchor(%$) found - strict ABNF specified."
         });
       }
       break;
@@ -12562,7 +13288,7 @@ module.exports = function() {
         data.errors.push({
           line : data.findLine(phraseIndex),
           char : phraseIndex,
-          msg : "Back reference operator, '" + name + "', found - strict ABNF specified."
+          msg : "Back reference operator(" + name + ") found - strict ABNF specified."
         });
       }
       break;
@@ -12578,10 +13304,11 @@ module.exports = function() {
       break;
     case id.MATCH:
       if (data.strict) {
+        var name = apglib.utils.charsToString(chars, phraseIndex, result.phraseLength);
         data.errors.push({
           line : data.findLine(phraseIndex),
           char : phraseIndex,
-          msg : "UDT operator found - strict ABNF specified."
+          msg : "UDT operator found("+name+") - strict ABNF specified."
         });
       }
       break;
@@ -12643,7 +13370,7 @@ module.exports = function() {
       data.errors.push({
         line : data.findLine(topAlt.tlsOpen),
         char : topAlt.tlsOpen,
-        msg : 'Case-insensitive literal string, "...", opened but not closed.'
+        msg : 'Case-insensitive literal string("...") opened but not closed.'
       });
       topAlt.basicError = true;
       topAlt.tlsOpen = null;
@@ -12696,7 +13423,7 @@ module.exports = function() {
       data.errors.push({
         line : data.findLine(topAlt.clsOpen),
         char : topAlt.clsOpen,
-        msg : "Case-sensitive literal string, '...', opened but not closed."
+        msg : "Case-sensitive literal string('...') opened but not closed."
       });
       topAlt.clsOpen = null;
       topAlt.basicError = true;
@@ -12706,7 +13433,7 @@ module.exports = function() {
         data.errors.push({
           line : data.findLine(topAlt.clsOpen),
           char : topAlt.clsOpen,
-          msg : "Case-sensitive string operator, '...', found - strict ABNF specified."
+          msg : "Case-sensitive string operator('...') found - strict ABNF specified."
         });
       }
       topAlt.clsOpen = null;
@@ -12756,7 +13483,7 @@ module.exports = function() {
       data.errors.push({
         line : data.findLine(topAlt.prosValOpen),
         char : topAlt.prosValOpen,
-        msg : "Prose value, <...>, opened but not closed."
+        msg : "Prose value operator(<...>) opened but not closed."
       });
       topAlt.basicError = true;
       topAlt.prosValOpen = null;
@@ -12766,7 +13493,7 @@ module.exports = function() {
           .push({
             line : data.findLine(topAlt.prosValOpen),
             char : topAlt.prosValOpen,
-            msg : "Prose value operator, <...>, found. The ABNF syntax is valid, but a parser cannot be generated from this grammar."
+            msg : "Prose value operator(<...>) found. The ABNF syntax is valid, but a parser cannot be generated from this grammar."
           });
       topAlt.prosValOpen = null;
       break;
@@ -12805,7 +13532,7 @@ module.exports = function() {
       data.errors.push({
         line : data.findLine(topAlt.groupOpen),
         char : topAlt.groupOpen,
-        msg : "Group, (...), opened but not closed."
+        msg : "Group \"(...)\" opened but not closed."
       });
       topAlt = data.altStack.pop();
       topAlt.groupError = true;
@@ -12848,7 +13575,7 @@ module.exports = function() {
       data.errors.push({
         line : data.findLine(topAlt.optionOpen),
         char : topAlt.optionOpen,
-        msg : "Option, [...], opened but not closed."
+        msg : "Option \"[...]\" opened but not closed."
       });
       topAlt = data.altStack.pop();
       topAlt.optionError = true;
@@ -12872,6 +13599,26 @@ module.exports = function() {
           line : data.findLine(phraseIndex),
           char : phraseIndex,
           msg : "Unrecognized SABNF element."
+        });
+      }
+      break;
+    }
+  }
+  var synLineEnd = function(result, chars, phraseIndex, data) {
+    switch (result.state) {
+    case id.ACTIVE:
+      break;
+    case id.EMPTY:
+      break;
+    case id.NOMATCH:
+      break;
+    case id.MATCH:
+      if(result.phraseLength === 1 && data.strict){
+        var end = (chars[phraseIndex] === 13) ? "CR" : "LF";
+        data.errors.push({
+          line : data.findLine(phraseIndex),
+          char : phraseIndex,
+          msg : "Line end '"+end+"' found - strict ABNF specified, only CRLF allowed."
         });
       }
       break;
@@ -12908,7 +13655,7 @@ module.exports = function() {
       break;
     }
   }
-  /* define the list of callback functions */
+  // Define the list of callback functions.
   this.callbacks = [];
   this.callbacks['andop'] = synAndOp;
   this.callbacks['basicelementerr'] = synBasicElementError;
@@ -12920,6 +13667,7 @@ module.exports = function() {
   this.callbacks['groupclose'] = synGroupClose;
   this.callbacks['groupopen'] = synGroupOpen;
   this.callbacks['lineenderror'] = synLineEndError;
+  this.callbacks['lineend'] = synLineEnd;
   this.callbacks['notop'] = synNotOp;
   this.callbacks['optionclose'] = synOptionClose;
   this.callbacks['optionopen'] = synOptionOpen;
@@ -12938,6 +13686,8 @@ module.exports = function() {
   this.callbacks['bkaop'] = synBkaOp;
   this.callbacks['bknop'] = synBknOp;
   this.callbacks['bkrop'] = synBkrOp;
+  this.callbacks['abgop'] = synAbgOp;
+  this.callbacks['aenop'] = synAenOp;
 }
 
-},{"apg-lib":18}]},{},[7]);
+},{"apg-lib":21}]},{},[9]);

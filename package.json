@@ -1,7 +1,7 @@
 {
   "name": "apg-exp",
   "version": "1.0.5",
-  "description": "Pattern-matching alternative to RegExp. Replaces the regular expression syntax with ABNF. Adds APG parser features such as User Defined Terminals and acces to the AST.",
+  "description": "Pattern-matching alternative to RegExp. Replaces the regular expression syntax with ABNF. Adds APG parser features such as User Defined Terminals (hand-written pattern matchers) and access to the AST.",
   "main": "./src/apg-exp.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -12,12 +12,13 @@
     "apgexp.js",
     "apgexp-min.js",
     "apgexp.css",
+    "apgexp-min.css",
     "index.md",
     "docco-gen"
   ],
   "dependencies": {
-    "apg": "*",
-    "apg-lib": "*"
+    "apg": "3.x",
+    "apg-lib": "3.x"
   },
   "repository": {
     "type": "git",
@@ -28,6 +29,9 @@
   },
   "keywords": [
     "regexp",
+    "regex",
+    "patterns",
+    "pattern-matching",
     "abnf",
     "search",
     "apg"

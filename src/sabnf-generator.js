@@ -23,13 +23,7 @@ module.exports = function(input){
   while(true){
     /* verify the input string - preliminary analysis*/
     try{
-      grammarAnalysis.getString(input);
-    }catch(e){
-      result.error = errorName + e.msg;
-      break;
-    }
-    try{
-      grammarResult = grammarAnalysis.analyze();
+      grammarResult = grammarAnalysis.analyze(input);
     }catch(e){
       result.error = errorName + e.msg;
       break;
