@@ -46,7 +46,6 @@ module.exports = function(obj, flags) {
       default:
         error = errorName + "Invalid flags supplied to constructor: '" + flags + "'";
         return error;
-        break;
       }
     }
     /* alphabetize the existing flags */

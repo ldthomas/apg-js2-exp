@@ -1,8 +1,6 @@
 // This module implements the `replace()` function.
 "use strict;"
 var errorName = "apg-exp: replace(): ";
-var apglib = require("apg-lib");
-var repGrammar = new (require("./replace-grammar.js"))();
 var parseReplacementString = require("./parse-replacement.js");
 /* replace special replacement patterns, `$&`, etc. */
 var generateReplacementString = function(p, rstr, items) {
@@ -39,7 +37,6 @@ var generateReplacementString = function(p, rstr, items) {
       break;
     default:
       throw new Error(errorName + "generateREplacementString(): unrecognized item type: " + item.type);
-      break;
     }
   });
   return replace;

@@ -102,7 +102,6 @@ module.exports = function(p, str){
   if(data.names > 0){
     var badNames = [];
     var i = 0;
-    var n = 0;
     for(; i < data.items.length; i +=1){
       var item = data.items[i];
       if(item.type === "name"){

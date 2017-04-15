@@ -8,79 +8,56 @@
 "use strict;";
 module.exports = function(input){
   var errorName = "apg-exp: generator: ";
-  var apg = require("apg");
-  var attributes = new apg.attributes();
-  var grammarAnalysis = new apg.inputAnalysisParser();
-  var parser = new apg.ABNFForSABNFParser();
-  var grammarResult;
-  var grammarObject = null;
+  var api = require("apg-api");
   var result = {obj: null, error: null, text: null, html: null};
-  var grammarText, grammarHtml;
   var grammarTextTitle = "annotated grammar:\n";
   var textErrorTitle = "annotated grammar errors:\n";
-  var htmlErrorTitle = "<h3>annotated grammar errors</h3>";
-  var grammarHtmlTitle = "<h3>annotated grammar</h3>";
+  function resultError(api, result, header){
+    result.error = header;
+    result.text  = grammarTextTitle;
+    result.text += api.linesToAscii();
+    result.text += textErrorTitle;
+    result.text += api.errorsToAscii();
+    result.html = api.linesToHtml();
+    result.html += api.errorsToHtml();
+  }
   while(true){
     /* verify the input string - preliminary analysis*/
     try{
-      grammarResult = grammarAnalysis.analyze(input);
+      api = new api(input);
+      api.scan();
     }catch(e){
       result.error = errorName + e.msg;
       break;
     }
-    if(grammarResult.hasErrors){
-      result.error = "grammar has validation errors";
-      result.text  = grammarTextTitle;
-      result.text += grammarAnalysis.toString();
-      result.text += textErrorTitle;
-      result.text += grammarAnalysis.errorsToString(grammarResult.errors);
-      result.html = grammarAnalysis.toHtml();
-      result.html += grammarAnalysis.errorsToHtml(grammarResult.errors);
+    if(api.errors.length){
+      resultError(api, result, "grammar has validation errors");
       break;
     }
     
     /* syntax analysis of the grammar */
-    grammarResult = parser.syntax(grammarAnalysis);
-    if(grammarResult.hasErrors){
-      result.error = "grammar has syntax errors";
-      result.text  = grammarTextTitle;
-      result.text += grammarAnalysis.toString();
-      result.text += textErrorTitle;
-      result.text += grammarAnalysis.errorsToString(grammarResult.errors);
-      result.html = grammarAnalysis.toHtml();
-      result.html += grammarAnalysis.errorsToHtml(grammarResult.errors);
+    api.parse()
+    if(api.errors.length){
+      resultError(api, result, "grammar has syntax errors");
       break;
     }
     
     /* semantic analysis of the grammar */
-    grammarResult = parser.semantic();
-    if(grammarResult.hasErrors){
-      result.error = "grammar has semantic errors";
-      result.text  = grammarTextTitle;
-      result.text += grammarAnalysis.toString();
-      result.text += textErrorTitle;
-      result.text += grammarAnalysis.errorsToString(grammarResult.errors);
-      result.html = grammarAnalysis.toHtml();
-      result.html += grammarAnalysis.errorsToHtml(grammarResult.errors);
+    api.translate();
+    if(api.errors.length){
+      resultError(api, result, "grammar has semantic errors");
       break;
     }
     
     /* attribute analysis of the grammar */
-    var attrErrors = attributes.getAttributes(grammarResult.rules, grammarResult.rulesLineMap);
-    if(attrErrors.length > 0){
-      result.error = "grammar has attribute errors";
-      result.text  = grammarTextTitle;
-      result.text += grammarAnalysis.toString();
-      result.text += textErrorTitle;
-      result.text += grammarAnalysis.errorsToString(attrErrors);
-      result.html = grammarAnalysis.toHtml() + grammarAnalysis.errorsToHtml(attrErrors);
-      result.html = grammarAnalysis.toHtml();
-      result.html += grammarAnalysis.errorsToHtml(attrErrors);
+    api.attributes();
+    if(api.errors.length){
+      resultError(api, result, "grammar has attribute errors");
       break;
     }
     
     /* finally, generate a grammar object */
-    result.obj = parser.generateObject(grammarResult.rules, grammarResult.udts, input);
+    result.obj = api.toObject();
     break;
   }
   return result;

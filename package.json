@@ -9,15 +9,15 @@
   "files": [
     "src",
     "guide",
-    "apgexp.js",
-    "apgexp-min.js",
-    "apgexp.css",
-    "apgexp-min.css",
+    "apg-exp.js",
+    "apg-exp-min.js",
+    "apg-exp.css",
+    "apg-exp-min.css",
     "index.md",
     "docco-gen"
   ],
   "dependencies": {
-    "apg": "3.x",
+    "apg-api": "1.x",
     "apg-lib": "3.x"
   },
   "repository": {

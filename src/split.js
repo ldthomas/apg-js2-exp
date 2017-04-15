@@ -1,7 +1,5 @@
 // This module implements the `split()` function.
 "use strict;"
-var thisFunction = "split.js: split: ";
-var apglib = require("apg-lib");
 /* called by split() to split the string */
 exports.split = function(p, str, limit) {
   var exp = p._this;

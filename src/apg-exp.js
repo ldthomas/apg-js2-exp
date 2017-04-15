@@ -531,6 +531,11 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
   // [`RegExp` properties](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp).
   this.toText = function(mode) {
     if (this.unicode) {
+      // mode:
+      // - "ascii", (default) display characters arrays as ASCII text
+      // - "decimal", display character arrays as decimal integers
+      // - "hexidecimal", display character arrays as hexidecimal (\xHH) integers
+      // - "unicode", display character arrays as unicode (\uHH) integers
       return resultFuncs.u.expToText(this, mode);
     }
     return resultFuncs.s.expToText(this);
@@ -538,6 +543,7 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
   // Returns the "last match" information in the `apg-exp` object formatted as an HTML table.
   this.toHtml = function(mode) {
     if (this.unicode) {
+      // *see mode definitions above
       return resultFuncs.u.expToHtml(this, mode);
     }
     return resultFuncs.s.expToHtml(this);
@@ -545,6 +551,7 @@ module.exports = function(input, flags, nodeHits, treeDepth) {
   // Same as `toHtml()` except the output is a complete HTML page.
   this.toHtmlPage = function(mode) {
     if (this.unicode) {
+      // *see mode definitions above
       return resultFuncs.u.expToHtmlPage(this, mode);
     }
     return resultFuncs.s.expToHtmlPage(this);

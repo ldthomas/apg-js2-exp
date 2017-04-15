@@ -117,10 +117,10 @@ var sLastMatch = function(p, result) {
   var exp = p._this;
   var temp;
   exp.lastMatch = result[0];
-  temp = p.chars.slice(0, p.result.index);
-  exp.leftContext = p.charsToString(temp, 0);
+  temp = p.chars.slice(0, result.index);
+  exp.leftContext = p.charsToString(temp);
   temp = p.chars.slice(result.index + result.length);
-  exp.rightContext = p.charsToString(temp, 0);
+  exp.rightContext = p.charsToString(temp);
   exp["input"] = result.input.slice(0);
   exp["$_"] = exp["input"];
   exp["$&"] = exp.lastMatch;
@@ -166,7 +166,6 @@ var uLastMatch = function(p, result) {
 }
 /* set the returned result properties, and the `last result` properties of the object */
 var setResult = function(p, parserResult) {
-  var exp = p._this;
   var result;
   p.result = {
     index : parserResult.index,
