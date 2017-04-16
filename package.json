@@ -1,6 +1,6 @@
 {
   "name": "apg-exp",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Pattern-matching alternative to RegExp. Replaces the regular expression syntax with ABNF. Adds APG parser features such as User Defined Terminals (hand-written pattern matchers) and access to the AST.",
   "main": "./src/apg-exp.js",
   "scripts": {
