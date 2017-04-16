@@ -17,8 +17,8 @@
     "docco-gen"
   ],
   "dependencies": {
-    "apg-api": "1.x",
-    "apg-lib": "3.x"
+    "apg-api": "1.0.x",
+    "apg-lib": "3.1.x"
   },
   "repository": {
     "type": "git",
