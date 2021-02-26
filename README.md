@@ -2,11 +2,11 @@
 
 **apg-exp** is a regex-like pattern-matching engine that uses a superset of the [ABNF syntax](https://tools.ietf.org/html/rfc5234) for the pattern definitions and [**APG**](https://github.com/ldthomas/apg-js2) to create and apply the pattern-matching parser.
 
-**Tutorial:** Don't miss the [tutorial](https://www.sitepoint.com/alternative-to-regular-expressions/) on [sitepoint.com](https://www.sitepoint.com/).
+**Tutorial:** Don't miss the [tutorial on sitepoint.com](https://www.sitepoint.com/alternative-to-regular-expressions/).
 It will walk you through the basics from simple to some fairly sophisticated pattern matching of nested, paired parentheses and other brackets. (Something you can't do with RegExp.) It's all laid out for you with nine (9), hands-on, [CodePen](http://codepen.io/) examples.
 
 **Complete User's Guide:** A complete user's guide can be found at `./guide/index.html` 
-or the [**APG** website](http://coasttocoastresearch.com/docjs2/apg-exp-guide/index.html).
+or the [**APG** website](https://sabnf.com/docs/apg-exp-guide/index.html).
 
 **v2.1.0 release notes:** There are no functional changes in version 2.1.0.
 Its dependency on **apg** has been modified to depend instead on the new **apg** API,
@@ -139,7 +139,8 @@ var exp = new ApgExp(pattern);
 </script>
 
 ```
-See, specifically, the [email](https://github.com/ldthomas/apg-js2-examples/tree/master/apg-exp/email) example.
+See, specifically, the 
+[email](https://github.com/ldthomas/apg-js2-examples/blob/master/apg-exp/webpage/email.js) example.
 
 **Examples:**  
 See <a href="https://github.com/ldthomas/apg-js2-examples/tree/master/apg-exp">apg-js2-examples/apg-exp</a> for many more examples of using
@@ -153,7 +154,7 @@ npm install -g docco
 ./docco-gen
 ```
 View `docs/index.html` in any web browser to get started.
-Or view it on the [APG website](http://coasttocoastresearch.com/docjs2/apg-exp/index.html)
+Or view it on the [APG website](https://sabnf.com)
 
 **Copyright:**  
   *Copyright &copy; 2017 Lowell D. Thomas, all rights reserved*  
