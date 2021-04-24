@@ -1,11 +1,13 @@
 # apg-exp - APG Expressions
 
+> _**deprecated** Use the updated version [**apg-js**](https://github.com/ldthomas/apg-js)._
+
 **apg-exp** is a regex-like pattern-matching engine that uses a superset of the [ABNF syntax](https://tools.ietf.org/html/rfc5234) for the pattern definitions and [**APG**](https://github.com/ldthomas/apg-js2) to create and apply the pattern-matching parser.
 
 **Tutorial:** Don't miss the [tutorial on sitepoint.com](https://www.sitepoint.com/alternative-to-regular-expressions/).
 It will walk you through the basics from simple to some fairly sophisticated pattern matching of nested, paired parentheses and other brackets. (Something you can't do with RegExp.) It's all laid out for you with nine (9), hands-on, [CodePen](http://codepen.io/) examples.
 
-**Complete User's Guide:** A complete user's guide can be found at `./guide/index.html` 
+**Complete User's Guide:** A complete user's guide can be found at `./guide/index.html`
 or the [**APG** website](https://sabnf.com/docs/apg-exp-guide/index.html).
 
 **v2.1.0 release notes:** There are no functional changes in version 2.1.0.
@@ -14,9 +16,10 @@ Its dependency on **apg** has been modified to depend instead on the new **apg**
 This removes all dependency on the node.js file system module "fs".
 Some development frameworks are incompatible with "fs".
 
-**apg-exp:** By way of introduction, the [regex Wikipedia article](https://en.wikipedia.org/wiki/Regular_expression) would be a good start and Jeffrey Friedl's book, [*Mastering Regular Expressions*](http://www.amazon.com/Mastering-Regular-Expressions-Jeffrey-Friedl/dp/0596528124) would be a lot better and more complete. This introduction will just mention features, a little on motivation and try to point out some possible advantages to **apg-exp**.
+**apg-exp:** By way of introduction, the [regex Wikipedia article](https://en.wikipedia.org/wiki/Regular_expression) would be a good start and Jeffrey Friedl's book, [_Mastering Regular Expressions_](http://www.amazon.com/Mastering-Regular-Expressions-Jeffrey-Friedl/dp/0596528124) would be a lot better and more complete. This introduction will just mention features, a little on motivation and try to point out some possible advantages to **apg-exp**.
 
-**Features:**  
+**Features:**
+
 <ol>
 <li>
 The pattern syntax is a superset of ABNF (<a href="https://github.com/ldthomas/apg-js2/blob/master/SABNF.md">SABNF</a>.) The ABNF syntax is standardized for and used to describe most Internet technical specifications.
@@ -88,6 +91,7 @@ Numerous display functions for a quick view of the results as text or HTML table
 
 **Introduction:**  
 The motivation was originally twofold.
+
 <ol>
 <li>
 I wanted to replace the pattern syntax with ABNF, which to me at least, is much easier to read, write and debug than the conventional regex syntax.
@@ -101,64 +105,77 @@ Hardly any programmer has not needed regexes at some point, more likely lots of 
 
 At the outset I naively thought that the regular expressions of regexes were just that &ndash; the Chomsky hierarchy variety. Therefore, I thought that using an **APG** parser for the pattern matching would add a great deal of parsing power to the problem. I soon discovered that not only were regexes not real "regular expressions", they were powerful, recursive-descent parsers, loaded with features that went well beyond that of **APG**. I had to play a little catch up to add look behind, back referencing and anchors. That being done, however, I think there is still a case for claiming some added power. I'm not a regex expert and I won't be making any big claims here, but there are a couple of points I will mention. I think the way that **apg-exp** gives the user nearly full control over the input, output and interpretation of the character codes goes a long way to address a number of the cautions mentioned in Jeffrey Friedl's book, for example on pages 92 and 106. I also think it addresses a number of the things Larry Wall finds wrong with the regex culture in his [Apocalypse 5](http://perl6.org/archive/doc/design/apo/A05.html) page. For example, back referencing, support for named capture, nested patterns (recursive rules), capture of all matches to a sub-phrase and others.
 
-But the best thing to do, probably, is to head over to the 
+But the best thing to do, probably, is to head over to the
 [examples](https://github.com/ldthomas/apg-js2-examples/tree/master/apg-exp) and take a look.
 See and compare for yourself. I would suggest starting with the `flags`, `display` and `rules` examples to get your bearings and go from there.
 
-**Installation:**    
+**Installation:**  
 **GitHub:** In your project directory,
+
 ```
 git clone https://github.com/ldthomas/apg-js2-exp.git apgexp
 npm install apgexp --save
 ```
+
 **npm:** In your project directory,
+
 ```
 npm install apg-exp --save
 ```
+
 **web page:**
+
 ```
 git clone https://github.com/ldthomas/apg-js2-exp.git apgexp
 ```
+
 Then, in the header of your web page include,
+
 ```
 <link rel="stylesheet" href="./apgexp/apgexp.css">
 <script src="./apgexp/apgexp.js" charset="utf-8"></script>
 ```
+
 or,
+
 ```
 <link rel="stylesheet" href="./apgexp/apgexp-min.css">
 <script src="./apgexp/apgexp-min.js" charset="utf-8"></script>
 ```
+
 (Note that some **apg-exp** output is in HTML format and apgexp.css is needed to properly style it.
 Also, it is simply a copy of [apglib.css](https://github.com/ldthomas/apg-js2-lib).)
 
 Now access **apg-exp** as,
+
 ```
 <script>
 var exp = new ApgExp(pattern);
 </script>
 
 ```
-See, specifically, the 
+
+See, specifically, the
 [email](https://github.com/ldthomas/apg-js2-examples/blob/master/apg-exp/webpage/email.js) example.
 
 **Examples:**  
 See <a href="https://github.com/ldthomas/apg-js2-examples/tree/master/apg-exp">apg-js2-examples/apg-exp</a> for many more examples of using
 **apg-exp**.
-  
+
 **Documentation:**  
 The full documentation is in the code in [`docco`](https://jashkenas.github.io/docco/) format.
 To generate the documentation, from the package directory:
+
 ```
 npm install -g docco
 ./docco-gen
 ```
+
 View `docs/index.html` in any web browser to get started.
 Or view it on the [APG website](https://sabnf.com)
 
 **Copyright:**  
-  *Copyright &copy; 2017 Lowell D. Thomas, all rights reserved*  
+ _Copyright &copy; 2017 Lowell D. Thomas, all rights reserved_
 
 **License:**  
 Released under the BSD-3-Clause license.
-      
