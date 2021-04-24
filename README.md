@@ -1,6 +1,6 @@
 # apg-exp - APG Expressions
 
-> _**deprecated** Use the updated version [**apg-js**](https://github.com/ldthomas/apg-js)._
+> _**Deprecated** Use the updated version [**apg-js**](https://github.com/ldthomas/apg-js) instead._
 
 **apg-exp** is a regex-like pattern-matching engine that uses a superset of the [ABNF syntax](https://tools.ietf.org/html/rfc5234) for the pattern definitions and [**APG**](https://github.com/ldthomas/apg-js2) to create and apply the pattern-matching parser.
 
